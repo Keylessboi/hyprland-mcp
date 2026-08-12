@@ -338,11 +338,17 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'input_click',
     {
       title: 'Click mouse',
-      description: 'Move the cursor to a logical coordinate and click. The focus guard verifies the target window before injecting.',
-      inputSchema: z.object({ x: z.number(), y: z.number(), button: z.enum(['left', 'right', 'middle']).default('left'), target: targetSchema.optional() }),
+      description: 'Move the cursor to a coordinate and click. With a target window, clicks the center of that window. If the window is on a non-active workspace, toggles the special workspace overlay transparently (under 1s, workspace state preserved). Pass via_overlay: false to disable auto-overlay.',
+      inputSchema: z.object({
+        x: z.number().optional().describe('Logical coordinate x (if no target)'),
+        y: z.number().optional().describe('Logical coordinate y (if no target)'),
+        button: z.enum(['left', 'right', 'middle']).default('left'),
+        target: targetSchema.optional(),
+        via_overlay: z.boolean().default(true).describe('If target is on another workspace, use special workspace overlay to make it visible'),
+      }),
       annotations: { destructiveHint: true },
     },
-    async ({ x, y, button, target }) => {
+    async ({ x, y, button, target, via_overlay }) => {
       const start = Date.now();
       try {
         if (target !== undefined) {
@@ -350,15 +356,34 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
           const s = await state.snapshot();
           const w = s.clients.find((c) => c.address === address);
           if (!w) throw new HyprError('WINDOW_NOT_FOUND', 'target window vanished');
-          // center of the window
-          const cx = w.at[0] + w.size[0] / 2;
-          const cy = w.at[1] + w.size[1] / 2;
-          await input.moveCursor(Math.round(cx), Math.round(cy));
-        } else {
-          await input.moveCursor(Math.round(x), Math.round(y));
+          const cx = Math.round(w.at[0] + w.size[0] / 2);
+          const cy = Math.round(w.at[1] + w.size[1] / 2);
+
+          const activeWs = s.monitors.find((m) => m.focused)?.activeWorkspace?.id;
+          const onActive = activeWs !== undefined && w.workspace.id === activeWs;
+          const needsOverlay = via_overlay && !onActive;
+          const origWs = w.workspace.id;
+
+          if (needsOverlay) {
+            await ipc.dispatch(['movetoworkspacesilent', 'special:mcp-click', `address:${address}`]);
+            await ipc.dispatch(['togglespecialworkspace', 'mcp-click']);
+          }
+          await ipc.dispatch(['focuswindow', `address:${address}`]);
+          await new Promise((r) => setTimeout(r, 200));
+          await input.moveCursor(cx, cy);
+          await input.click(button);
+
+          if (needsOverlay) {
+            await ipc.dispatch(['togglespecialworkspace', 'mcp-click']);
+            await ipc.dispatch(['movetoworkspacesilent', String(origWs), `address:${address}`]);
+          }
+          return { content: [{ type: 'text', text: JSON.stringify({ x: cx, y: cy, button, address, overlay: needsOverlay }) }], structuredContent: ok('input_click', { x: cx, y: cy, button, overlay: needsOverlay }, start) } as const;
         }
+        const clickX = x ?? 0;
+        const clickY = y ?? 0;
+        await input.moveCursor(Math.round(clickX), Math.round(clickY));
         await input.click(button);
-        return { content: [{ type: 'text', text: JSON.stringify({ x, y, button }) }], structuredContent: ok('input_click', { x, y, button }, start) } as const;
+        return { content: [{ type: 'text', text: JSON.stringify({ x: clickX, y: clickY, button }) }], structuredContent: ok('input_click', { x: clickX, y: clickY, button }, start) } as const;
       } catch (e) {
         return { content: [{ type: 'text', text: JSON.stringify(err('input_click', e, start)) }], isError: true, structuredContent: err('input_click', e, start) } as const;
       }
