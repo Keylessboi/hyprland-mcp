@@ -17,6 +17,9 @@ import { loadConfig } from '../src/security.js';
 import { buildServer, type ServerDeps } from '../src/index.js';
 import { startFakeHyprland, type FakeHyprland } from './harness.js';
 import { monitorGeometry } from '../src/geometry.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const MONITORS = JSON.stringify([{ id: 0, name: 'eDP-1', width: 1920, height: 1080, x: 0, y: 0, scale: 1, focused: true, dpmsStatus: true }]);
 const CLIENTS = JSON.stringify([
@@ -85,7 +88,7 @@ beforeEach(async () => {
     state,
     screenshots,
     input,
-    config: loadConfig(),
+    config: { ...loadConfig(), screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-shot-')) },
     serverVersion: 'test',
   };
 
@@ -185,5 +188,16 @@ describe('MCP server over protocol', () => {
     // legacy path: no sendclick dispatch, ydotool used for the button
     expect(fake.received().filter((r) => r.startsWith('dispatch sendclick'))).toHaveLength(0);
     expect(inputFake.calls.filter((c) => c[0] === 'ydotool')).toHaveLength(1);
+  });
+
+  it('screenshot writes a file path a vision subagent can read', async () => {
+    const res = await client.callTool({ name: 'screenshot', arguments: { target: 'window', window: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean; result: { file: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.file).toBeTruthy();
+    expect(fs.existsSync(sc.result.file)).toBe(true);
+    // the file is a real image artifact, not the empty capture
+    const bytes = fs.readFileSync(sc.result.file);
+    expect(bytes.length).toBeGreaterThan(8);
   });
 });

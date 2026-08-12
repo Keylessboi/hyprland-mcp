@@ -92,9 +92,11 @@ The tests use a fake Hyprland socket. They never touch the live desktop.
 
 ## Text-only models and screenshots
 
-The `screenshot` tool returns an image plus a coordinate mapping. A vision-capable model sees the image. A text-only model gets the coordinates.
+The `screenshot` tool returns an image plus a coordinate mapping. A vision-capable model sees the image inline. A text-only model gets the coordinates.
 
-If your model cannot see images (for example `deepseek-v4-flash`), it MUST route screenshots through the **vision skill** to learn what is on screen. A text-only model cannot read the raw PNG. The vision skill sends the image to a vision-capable model and returns a JSON description. Never let a text-only model guess what a screenshot shows.
+The tool also writes every capture to a file under `~/Pictures/hyprland-mcp/` and returns that absolute path in the `file` field. A text-only model hands the path to a **vision subagent**, which reads the file and describes what it shows.
+
+If your model cannot see images (for example `deepseek-v4-flash`), it MUST route screenshots through the **vision skill** to learn what is on screen. The skill sends the image (by file path) to a vision-capable model and returns a JSON description. Never let a text-only model guess what a screenshot shows. The directory is private (`0700`).
 
 ## VM testing
 
