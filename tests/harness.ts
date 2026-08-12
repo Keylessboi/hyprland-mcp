@@ -56,6 +56,15 @@ export function startFakeHyprland(opts: FakeHyprlandOptions & { socketDir?: stri
         received.push(line);
         handle(line, sock);
       }
+      // Real hyprctl sends the request with no trailing newline (the compositor
+      // responds then closes). Mirror that: if a full request has accumulated
+      // with no newline and no pending lines, treat the buffer as the request.
+      if (buf.length > 0 && !buf.includes('\n') && !buf.startsWith('[[BATCH]]')) {
+        const line = buf.trim();
+        buf = '';
+        received.push(line);
+        handle(line, sock);
+      }
     });
   });
 

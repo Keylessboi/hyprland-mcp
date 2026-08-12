@@ -44,7 +44,9 @@ export function rawRequest(cfg: HyprlandConfig, command: string): Promise<string
 
     sock.setNoDelay(true);
     sock.on('connect', () => {
-      sock.write(command + '\n');
+      // hyprctl writes the raw request with NO trailing newline; the compositor
+      // responds then closes the connection (single request per connection).
+      sock.write(command);
     });
     sock.on('data', (chunk) => {
       buf += chunk.toString('utf8');
