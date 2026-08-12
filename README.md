@@ -66,6 +66,21 @@ npx vitest run          # 33 deterministic tests
 npx tsc --noEmit        # typecheck
 ```
 
+## Text-only (non-vision) models and screenshots
+
+`hyprland-mcp` is designed to be used from a coding agent. The `screenshot`
+tool returns the image plus a `structuredContent` coordinate mapping so
+vision-capable models can see the desktop and text-only models still get usable
+coordinates.
+
+If your agent's model cannot see images (e.g. `deepseek-v4-flash` or any other
+text-only model), it MUST route screenshots through the **vision skill** (or
+equivalent multimodal bridge) to interpret what is on screen — it cannot
+directly consume the raw PNG from `screenshot`. The vision skill delegates the
+image to a vision-capable model and returns a JSON description the text-only
+model can act on. Never let a text-only model guess what a screenshot shows;
+always delegate through the vision skill.
+
 ## VM testing
 
 A KVM VM is provisioned for live smoke tests. The VM runs Hyprland 0.56.2 headless with a virtio GPU. The full VM setup guide is in `docs/test-vm.md`.
