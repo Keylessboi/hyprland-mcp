@@ -4,11 +4,12 @@
   "description": "MCP server for Hyprland desktop control — eyes and hands for agents, background-app testing included",
   "type": "module",
   "bin": {
-    "hyprland-mcp": "./dist/index.js"
+    "hyprland-mcp": "./dist/hyprland-mcp"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "bun build src/index.ts --compile --outfile dist/hyprland-mcp",
+    "build:tsc": "tsc -p tsconfig.json",
+    "start": "dist/hyprland-mcp",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
