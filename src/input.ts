@@ -142,6 +142,25 @@ export class InputController {
     }
   }
 
+  /** Drag: mousedown at start → move to end → mouseup */
+  async drag(startX: number, startY: number, endX: number, endY: number, button: 'left' | 'right' = 'left'): Promise<void> {
+    const btnCode = button === 'left' ? '0x40' : '0x41';
+    const upCode = button === 'left' ? '0x80' : '0x81';
+    await this.ipc.dispatch(['movecursor', String(Math.round(startX)), String(Math.round(startY))]);
+    let r = await this.runner.run('ydotool', ['click', btnCode]);
+    if (r.code !== 0) throw new HyprError('YDOTOOL_UNAVAILABLE', `ydotool drag failed: ${r.stderr.trim()}`, { recoverable: true });
+    const steps = 20;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const cx = Math.round(startX + (endX - startX) * t);
+      const cy = Math.round(startY + (endY - startY) * t);
+      await this.ipc.dispatch(['movecursor', String(cx), String(cy)]);
+      if (i < steps) await new Promise((r) => setTimeout(r, 5));
+    }
+    r = await this.runner.run('ydotool', ['click', upCode]);
+    if (r.code !== 0) throw new HyprError('YDOTOOL_UNAVAILABLE', `ydotool drag up failed: ${r.stderr.trim()}`, { recoverable: true });
+  }
+
   /**
    * Per-window chord WITHOUT focus change (Hyprland ≥0.41, probe-gated).
    * Grammar: "CTRL SHIFT, T, address:0x…" — uppercase comma-separated mods.

@@ -438,7 +438,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'input_paste',
     {
       title: 'Paste text (Unicode path)',
-      description: 'Paste text via wl-copy + Ctrl+V — the reliable Unicode/CJK path. Permission-gated; clipboard may contain secrets.',
+      description: 'Paste text via wl-copy + Ctrl+V. With a target window, uses sendshortcut (no focus steal — works on background windows). Without target, pastes into the currently focused window. Permission-gated.',
       inputSchema: z.object({ text: z.string(), target: targetSchema.optional() }),
       annotations: { destructiveHint: true },
     },
@@ -451,18 +451,56 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
         await runCommand('wl-copy', ['--', text]);
         if (target !== undefined) {
           const { address } = await resolveUnique(deps, target, 'input_paste');
-          const s = await state.snapshot();
-          const w = s.clients.find((c) => c.address === address);
-          if (!w) throw new HyprError('WINDOW_NOT_FOUND', 'target window vanished');
-          await ipc.dispatch(['focuswindow', `address:${address}`]);
-          await new Promise((r) => setTimeout(r, 150));
-          await input.keyChord('ctrl+v', address);
-        } else {
-          await input.keyChord('ctrl+v');
+          await input.sendShortcutToWindow(['CTRL'], 'V', address);
+          return { content: [{ type: 'text', text: JSON.stringify({ pasted: text.length, mode: 'sendshortcut', window: address }) }], structuredContent: ok('input_paste', { chars: text.length, mode: 'sendshortcut' }, start) } as const;
         }
-        return { content: [{ type: 'text', text: JSON.stringify({ pasted: text.length }) }], structuredContent: ok('input_paste', { chars: text.length }, start) } as const;
+        await input.keyChord('ctrl+v');
+        return { content: [{ type: 'text', text: JSON.stringify({ pasted: text.length, mode: 'focused' }) }], structuredContent: ok('input_paste', { chars: text.length, mode: 'focused' }, start) } as const;
       } catch (e) {
         return { content: [{ type: 'text', text: JSON.stringify(err('input_paste', e, start)) }], isError: true, structuredContent: err('input_paste', e, start) } as const;
+      }
+    },
+  );
+
+  server.registerTool(
+    'input_drag',
+    {
+      title: 'Mouse drag',
+      description: 'Drag the mouse from one coordinate to another. Uses movecursor for positioning + ydotool mousedown/move/mouseup.',
+      inputSchema: z.object({
+        start_x: z.number(), start_y: z.number(),
+        end_x: z.number(), end_y: z.number(),
+        button: z.enum(['left', 'right']).default('left'),
+      }),
+      annotations: { destructiveHint: true },
+    },
+    async ({ start_x, start_y, end_x, end_y, button }) => {
+      const start = Date.now();
+      try {
+        await input.drag(start_x, start_y, end_x, end_y, button);
+        return { content: [{ type: 'text', text: JSON.stringify({ dragged: true, from: [start_x, start_y], to: [end_x, end_y] }) }], structuredContent: ok('input_drag', { from: [start_x, start_y], to: [end_x, end_y] }, start) } as const;
+      } catch (e) {
+        return { content: [{ type: 'text', text: JSON.stringify(err('input_drag', e, start)) }], isError: true, structuredContent: err('input_drag', e, start) } as const;
+      }
+    },
+  );
+
+  server.registerTool(
+    'clipboard_read',
+    {
+      title: 'Read clipboard',
+      description: 'Read the clipboard text via wl-paste. Permission-gated. The clipboard may contain secrets.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const start = Date.now();
+      try {
+        const out = await runCommand('wl-paste', [], { timeoutMs: 2000 });
+        const text = out.stdout.trim();
+        return { content: [{ type: 'text', text: text }], structuredContent: ok('clipboard_read', { length: text.length }, start) } as const;
+      } catch (e) {
+        return { content: [{ type: 'text', text: JSON.stringify(err('clipboard_read', e, start)) }], isError: true, structuredContent: err('clipboard_read', e, start) } as const;
       }
     },
   );
