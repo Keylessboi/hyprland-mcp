@@ -285,7 +285,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     {
       title: 'Screenshot',
       description:
-        'Capture the screen, a monitor, a window, or a region. Window capture prefers grim -T (occluded windows, zero perturbation) with geometry-crop fallback. Returns the image as inline MCP content plus a file path (for a vision subagent) and coordinate mapping.',
+        'Capture the screen, a monitor, a window, or a region. Window capture prefers grim -T (occluded windows, zero perturbation) with geometry-crop fallback. Returns the image as inline MCP content plus a file path (for a vision subagent) and coordinate mapping. NEVER run grim or slurp yourself: this tool is the only sanctioned capture path — it handles occluded windows and never disturbs the app.',
       inputSchema: z.object({
         target: z.enum(['screen', 'window', 'region']).default('screen'),
         window: targetSchema.optional(),
@@ -378,7 +378,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'input_click',
     {
       title: 'Click mouse',
-      description: 'Move the cursor to a coordinate and click. With a target window, clicks the center of that window. If the window is on a non-active workspace, toggles the special workspace overlay transparently (under 1s, workspace state preserved). Pass via_overlay: false to disable auto-overlay.',
+      description: 'Move the cursor to a coordinate and click. With a target window, clicks the center of that window. If the window is on a non-active workspace, toggles the special workspace overlay transparently (under 1s, workspace state preserved). Pass via_overlay: false to disable auto-overlay. NEVER use ydotool or hyprctl dispatch movecursor yourself: this tool is focus-guarded and workspace-safe.',
       inputSchema: z.object({
         x: z.number().optional().describe('Logical coordinate x (if no target)'),
         y: z.number().optional().describe('Logical coordinate y (if no target)'),
@@ -447,7 +447,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'input_type',
     {
       title: 'Type text',
-      description: 'Type ASCII text into the focused window via wtype. Unicode/CJK requires input_paste. Focus guard applies.',
+      description: 'Type ASCII text into the focused window via wtype. Unicode/CJK requires input_paste. Focus guard applies. NEVER run wtype yourself: this tool verifies focus first so input cannot go to the wrong window.',
       inputSchema: z.object({ text: z.string(), target: targetSchema.optional() }),
       annotations: { destructiveHint: true },
     },
@@ -516,7 +516,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'input_paste',
     {
       title: 'Paste text (Unicode path)',
-      description: 'Paste text via wl-copy + Ctrl+V. With a target window, uses sendshortcut (no focus steal — works on background windows). Without target, pastes into the currently focused window. Permission-gated.',
+      description: 'Paste text via wl-copy + Ctrl+V. With a target window, uses sendshortcut (no focus steal — works on background windows). Without target, pastes into the currently focused window. Permission-gated. NEVER run wl-copy or wl-paste yourself: this tool is focus-guarded and gated.',
       inputSchema: z.object({ text: z.string(), target: targetSchema.optional() }),
       annotations: { destructiveHint: true },
     },

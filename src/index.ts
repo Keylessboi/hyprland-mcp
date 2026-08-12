@@ -29,8 +29,27 @@ export interface ServerDeps {
   serverVersion: string;
 }
 
+// Server-level instructions injected into the client's context at initialize.
+// These are the hard rules every model using this server must follow. The
+// server owns the desktop; direct shell access to compositor tools bypasses
+// the safety contract (focus guard, deny-list, restore, capture ladder).
+const SERVER_INSTRUCTIONS = `You are connected to the hyprland-mcp server. It owns the Hyprland desktop. Use its tools for ALL desktop access.
+
+NEVER run any of these yourself in a shell:
+- grim, grimblast, slurp (screenshots)
+- hyprctl, hyprctl-json (desktop queries, dispatch, plugins)
+- ydotool, wtype, wl-copy, wl-paste (input and clipboard)
+- swaymsg, wlrctl, or any other Wayland/X11 control tool
+
+The server's tools do all of this safely: focus-guarded input, deny-listed windows, workspace restore, and a capture ladder that never disturbs the app. If you shell out directly you bypass those guarantees.
+
+When you need a screenshot, call the screenshot tool. It returns a file path in the 'file' field. To see the image with a text-only model, hand that path to a vision subagent which reads the file. Never capture with grim yourself.`;
+
 export function buildServer(deps: ServerDeps): McpServer {
-  const server = new McpServer({ name: 'hyprland-mcp', version: deps.serverVersion });
+  const server = new McpServer(
+    { name: 'hyprland-mcp', version: deps.serverVersion },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
   registerCoreTools(server, deps);
   return server;
 }
