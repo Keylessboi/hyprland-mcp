@@ -43,7 +43,13 @@ NEVER run any of these yourself in a shell:
 
 The server's tools do all of this safely: focus-guarded input, deny-listed windows, workspace restore, and a capture ladder that never disturbs the app. If you shell out directly you bypass those guarantees.
 
-When you need a screenshot, call the screenshot tool. It returns a file path in the 'file' field. To see the image with a text-only model, hand that path to a vision subagent which reads the file. Never capture with grim yourself.`;
+When you need a screenshot, call the screenshot tool. It returns a file path in the 'file' field. To see the image with a text-only model, hand that path to a vision subagent which reads the file. Never capture with grim yourself.
+
+WORK IN YOUR OWN WORKSPACE. The user is working on their workspace right now. Do not touch it.
+- Do not switch the user's active workspace. Do not steal focus from the user's windows.
+- Run the app you are testing on a dedicated agent workspace (a negative id, e.g. -42). Use the workspace tool's silent form (window + id, no view switch) to move it there.
+- Launch the app there, test it there, screenshot it there, close it there. Return the workspace to a clean state when done.
+- Only interact with a window on the user's workspace when the task explicitly requires it, and restore focus and workspace afterward.`;
 
 export function buildServer(deps: ServerDeps): McpServer {
   const server = new McpServer(
