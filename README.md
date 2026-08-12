@@ -1,33 +1,45 @@
 # hyprland-mcp
 
-MCP server for Hyprland desktop control. Agents get eyes and hands on your Wayland desktop. Test apps running in the background without taking over your screen.
+An MCP server for Hyprland desktop control. An AI agent uses it to see your desktop and act on it. The agent can test an app in the background without taking over your screen.
 
 ## What it does
 
-The server gives AI agents these tools:
+The server gives an agent these tools:
 
-- **See the desktop** — list every window, including windows on other workspaces. Capture screenshots of any window, even occluded or on invisible workspaces. Zero perturbation of the app under test.
-- **Type and click** — send text, key chords, mouse clicks, and clipboard paste. The non-interrupting path uses `sendshortcut` and `grim -T` so the agent works on its own workspace without stealing your screen.
-- **Launch and control** — start apps, move them to a dedicated agent workspace, focus, close.
+- **See the desktop.** List every window, including windows on other workspaces. Capture any window, even one that is occluded or hidden. The capture does not disturb the app.
+- **Type and click.** Send text, key chords, mouse clicks, and clipboard paste. The click path uses a native plugin when it is loaded (see below).
+- **Launch and control.** Start apps, move them to a private agent workspace, focus, close.
 
 ## The agent workspace
 
-The agent runs on its own workspace. You work on yours. The agent reads windows, takes screenshots, and sends input to its workspace without switching your view.
+The agent works on its own workspace. You work on yours. The agent reads windows, takes screenshots, and sends input to its workspace. Your view never changes.
 
-Launch an app into the agent workspace. Move it there silently:
+Launch an app into the agent workspace and move it there:
 
 ```
 launch { command: "foot", args: ["--title", "agent-shell"], wait_for_window: true }
 workspace { id: -42, window: "foot" }
 ```
 
-The agent sees the window wherever it is. No focus change. No workspace switch.
+The agent sees the window wherever it sits. No focus change. No workspace switch.
+
+## The click plugin
+
+The server can click any window through the [hyprland-mcp-click](https://github.com/Keylessboi/hyprland-mcp-click) plugin. The plugin adds a `sendclick` dispatcher. One dispatch clicks a window, even a hidden one, with no flash. The server uses it when the plugin is loaded and falls back to its old path otherwise.
+
+Install the plugin:
+
+```sh
+hyprpm add https://github.com/Keylessboi/hyprland-mcp-click
+hyprpm enable hyprland-mcp-click
+```
 
 ## Requirements
 
 - Hyprland 0.41+
 - Node 20+
-- grim, ydotool (ydotoold), wtype, wl-clipboard
+- grim, wtype, wl-clipboard (for text input and screenshots)
+- ydotoold (only for the fallback click path)
 
 ## Install
 
@@ -37,53 +49,63 @@ cd hyprland-mcp
 npm install
 ```
 
+## Run as a systemd service
+
+A user unit is installed at `~/.config/systemd/user/hyprland-mcp.service`. It runs the compiled binary.
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now hyprland-mcp.service
+journalctl --user -u hyprland-mcp.service -f
+```
+
+Rebuild the binary after code changes:
+
+```sh
+bun build src/index.ts --compile --outfile dist/hyprland-mcp
+systemctl --user restart hyprland-mcp.service
+```
+
 ## Wire into opencode
 
-Add to `~/.config/opencode/opencode.jsonc`:
+The opencode config points at the compiled binary:
 
 ```jsonc
 "mcp": {
   "hyprland": {
     "type": "local",
-    "command": ["node", "--import", "./node_modules/tsx/dist/loader.mjs", "src/index.ts"],
-    "workdir": "/home/travis/Projects/hyprland-mcp",
+    "command": ["/home/travis/Projects/hyprland-mcp/dist/hyprland-mcp"],
     "timeout": 10000
   }
 }
-```
-
-Or start manually:
-
-```sh
-cd hyprland-mcp && node --import ./node_modules/tsx/dist/loader.mjs src/index.ts
 ```
 
 ## Run tests
 
 ```sh
 npm install
-npx vitest run          # 33 deterministic tests
+npx vitest run          # deterministic tests; no live compositor needed
 npx tsc --noEmit        # typecheck
 ```
 
-## Text-only (non-vision) models and screenshots
+The tests use a fake Hyprland socket. They never touch the live desktop.
 
-`hyprland-mcp` is designed to be used from a coding agent. The `screenshot`
-tool returns the image plus a `structuredContent` coordinate mapping so
-vision-capable models can see the desktop and text-only models still get usable
-coordinates.
+## Text-only models and screenshots
 
-If your agent's model cannot see images (e.g. `deepseek-v4-flash` or any other
-text-only model), it MUST route screenshots through the **vision skill** (or
-equivalent multimodal bridge) to interpret what is on screen — it cannot
-directly consume the raw PNG from `screenshot`. The vision skill delegates the
-image to a vision-capable model and returns a JSON description the text-only
-model can act on. Never let a text-only model guess what a screenshot shows;
-always delegate through the vision skill.
+The `screenshot` tool returns an image plus a coordinate mapping. A vision-capable model sees the image. A text-only model gets the coordinates.
+
+If your model cannot see images (for example `deepseek-v4-flash`), it MUST route screenshots through the **vision skill** to learn what is on screen. A text-only model cannot read the raw PNG. The vision skill sends the image to a vision-capable model and returns a JSON description. Never let a text-only model guess what a screenshot shows.
 
 ## VM testing
 
-A KVM VM is provisioned for live smoke tests. The VM runs Hyprland 0.56.2 headless with a virtio GPU. The full VM setup guide is in `docs/test-vm.md`.
+A KVM VM runs Hyprland for live smoke tests. The full setup guide is in `docs/test-vm.md`.
+
+## Docs
+
+- `docs/architecture.md` — how the server works
+- `docs/plugin.md` — the click plugin integration
+- `docs/troubleshooting.md` — common failures and fixes
+- `docs/test-vm.md` — VM setup
 
 ## License
 
