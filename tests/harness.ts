@@ -26,6 +26,8 @@ export interface FakeHyprlandOptions {
 export interface FakeHyprland {
   dir: string;
   socketPath: string;
+  /** The live respond map; tests can add/mutate command responses. */
+  respond: Record<string, string | ((req: string) => string | Promise<string>)>;
   /** Number of connections accepted (proves connect-per-request). */
   connectionCount(): number;
   /** Commands received in order. */
@@ -95,6 +97,7 @@ export function startFakeHyprland(opts: FakeHyprlandOptions & { socketDir?: stri
       resolve({
         dir,
         socketPath,
+        respond: opts.respond,
         connectionCount: () => connections,
         received: () => [...received],
         close: () => {

@@ -163,4 +163,27 @@ describe('MCP server over protocol', () => {
     const sc = res.structuredContent as { ok: boolean; error: { code: string } };
     expect(sc.error.code).toBe('WINDOW_NOT_FOUND');
   });
+
+  it('input_click uses the sendclick plugin dispatch when available (no ydotool)', async () => {
+    fake.respond['plugin list'] = 'Plugin hyprland-mcp-click by Keylessboi:\n\tenabled: true';
+    const res = await client.callTool({ name: 'input_click', arguments: { target: 'gajim', button: 'right' } });
+    const sc = res.structuredContent as { ok: boolean; result: { plugin: boolean } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.plugin).toBe(true);
+    // single atomic dispatch, nothing routed through ydotool
+    expect(fake.received().filter((r) => r.startsWith('dispatch sendclick'))).toHaveLength(1);
+    expect(fake.received().filter((r) => r.startsWith('dispatch movetoworkspacesilent'))).toHaveLength(0);
+    expect(fake.received().filter((r) => r.startsWith('dispatch togglespecialworkspace'))).toHaveLength(0);
+    expect(inputFake.calls.filter((c) => c[0] === 'ydotool')).toHaveLength(0);
+  });
+
+  it('input_click falls back to the multi-step path when the plugin is absent', async () => {
+    fake.respond['plugin list'] = 'no plugins';
+    const res = await client.callTool({ name: 'input_click', arguments: { target: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+    // legacy path: no sendclick dispatch, ydotool used for the button
+    expect(fake.received().filter((r) => r.startsWith('dispatch sendclick'))).toHaveLength(0);
+    expect(inputFake.calls.filter((c) => c[0] === 'ydotool')).toHaveLength(1);
+  });
 });

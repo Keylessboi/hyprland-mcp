@@ -35,6 +35,27 @@ async function resolveUnique(deps: ServerDeps, target: string | number, action: 
 
 const wsIdSchema = z.number().int().describe('Workspace id (negative = special workspace)');
 
+// Cached probe: is the hyprland-mcp-click plugin loaded? When it is, the
+// server can collapse an overlay click into one atomic `sendclick` dispatch
+// instead of 4 roundtrips + a sleep + ydotool. Cached per ipc instance for the
+// lifetime of the process (plugins rarely hot-load mid-session).
+const sendclickCache = new WeakMap<object, boolean>();
+
+async function probeSendclick(ipc: { request: (req: string) => Promise<string> }): Promise<boolean> {
+  const cached = sendclickCache.get(ipc);
+  if (cached !== undefined)
+    return cached;
+  let available = false;
+  try {
+    const list = await ipc.request('plugin list');
+    available = list.includes('hyprland-mcp-click');
+  } catch {
+    available = false;
+  }
+  sendclickCache.set(ipc, available);
+  return available;
+}
+
 // ─── tool registration ──────────────────────────────────────────────────────
 
 export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
@@ -351,6 +372,19 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ x, y, button, target, via_overlay }) => {
       const start = Date.now();
       try {
+        // Fast path: with the hyprland-mcp-click plugin loaded, a single atomic
+        // `sendclick` dispatch handles both visible and hidden windows (flash-free
+        // overlay, workspace restore, no ydotool). The plugin clicks the window
+        // center; via_overlay:false keeps the legacy behavior instead.
+        if (target !== undefined && via_overlay && (await probeSendclick(ipc))) {
+          const { address } = await resolveUnique(deps, target, 'input_click');
+          await ipc.dispatch(['sendclick', `address:${address},button:${button}`]);
+          const s = await state.snapshot();
+          const w = s.clients.find((c) => c.address === address);
+          const cx = w ? Math.round(w.at[0] + w.size[0] / 2) : undefined;
+          const cy = w ? Math.round(w.at[1] + w.size[1] / 2) : undefined;
+          return { content: [{ type: 'text', text: JSON.stringify({ x: cx, y: cy, button, address, plugin: true }) }], structuredContent: ok('input_click', { x: cx, y: cy, button, plugin: true }, start) } as const;
+        }
         if (target !== undefined) {
           const { address } = await resolveUnique(deps, target, 'input_click');
           const s = await state.snapshot();
