@@ -84,13 +84,14 @@ export class OcrEngine {
   constructor(private runner: ScreenshotBackend) {}
 
   /** OCR a PNG/JPEG buffer. Returns words in PIXEL space (caller maps coords). */
-  async readImage(image: Buffer, opts: { language?: string } = {}): Promise<OcrResult> {
+  async readImage(image: Buffer, opts: { language?: string; timeoutMs?: number } = {}): Promise<OcrResult> {
     const lang = opts.language ?? 'eng';
+    const timeoutMs = opts.timeoutMs ?? 30_000;
     const dir = await mkdtemp(path.join(os.tmpdir(), 'hypr-ocr-'));
     const file = path.join(dir, 'capture.png');
     try {
       await writeFile(file, image);
-      const { stdout, code } = await this.runner.run('tesseract', [file, 'stdout', '-l', lang, 'tsv']);
+      const { stdout, code } = await this.runner.run('tesseract', [file, 'stdout', '-l', lang, 'tsv'], { timeoutMs });
       if (code !== 0)
         throw new HyprError('OCR_FAILED', `tesseract exited ${code ?? 'nonzero'}`);
       const words = parseTsv(stdout.toString('utf8'));

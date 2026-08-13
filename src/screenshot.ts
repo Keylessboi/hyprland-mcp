@@ -27,7 +27,14 @@ export interface ScreenshotBackend {
 export class RealCommandRunner implements ScreenshotBackend {
   run(bin: string, args: string[], opts: { timeoutMs?: number } = {}): Promise<{ stdout: Buffer; stderr: string; code: number | null }> {
     return new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      // Inject the Wayland session env so grim/wl-copy work even when the
+      // server runs outside a full session (systemd service, VM, ssh).
+      const env = {
+        ...process.env,
+        WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? 'wayland-1',
+        XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? `/run/user/${typeof process.getuid === 'function' ? process.getuid() : 1000}`,
+      };
+      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
       const out: Buffer[] = [];
       let err = '';
       const timer = setTimeout(() => {

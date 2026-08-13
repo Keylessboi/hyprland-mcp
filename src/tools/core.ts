@@ -540,7 +540,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
         const clickX = Math.round(region.x + (hit.left + hit.width / 2) / scale);
         const clickY = Math.round(region.y + (hit.top + hit.height / 2) / scale);
 
-        if (window !== undefined && address) {
+        if (window !== undefined && address && (await probeSendclick(ipc))) {
           await ipc.dispatch(['sendclick', `address:${address},button:${button},x:${clickX},y:${clickY}`]);
         } else {
           await ipc.dispatch(['movecursor', String(clickX), String(clickY)]);

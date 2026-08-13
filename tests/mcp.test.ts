@@ -314,7 +314,8 @@ describe('MCP server over protocol', () => {
     expect(sc.result.words[0]!.logical.x).toBe(960 + 21);
   });
 
-  it('click_text finds text and clicks its center via sendclick', async () => {
+  it('click_text finds text and clicks its center via sendclick when the plugin is loaded', async () => {
+    fake.respond['plugin list'] = 'Plugin hyprland-mcp-click by Keylessboi:\n\tenabled: true';
     // "Save" word: pixel (21,42,42,10) in window at x=960,y=0 → center (960+21+21, 0+42+5)
     const res = await client.callTool({ name: 'click_text', arguments: { text: 'Save', window: 'gajim' } });
     const sc = res.structuredContent as { ok: boolean; result: { x: number; y: number; address: string } };
@@ -324,6 +325,15 @@ describe('MCP server over protocol', () => {
     const sendclick = fake.received().find((r) => r.startsWith('dispatch sendclick'));
     expect(sendclick).toBeTruthy();
     expect(sendclick).toContain(`x:${sc.result.x},y:${sc.result.y}`);
+  });
+
+  it('click_text falls back to movecursor+ydotool when the plugin is absent', async () => {
+    fake.respond['plugin list'] = 'no plugins';
+    const res = await client.callTool({ name: 'click_text', arguments: { text: 'Save', window: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+    expect(fake.received().filter((r) => r.startsWith('dispatch sendclick'))).toHaveLength(0);
+    expect(fake.received().some((r) => r.startsWith('dispatch movecursor'))).toBe(true);
   });
 
   it('click_text errors with TEXT_NOT_FOUND when the text is absent', async () => {
