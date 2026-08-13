@@ -7,7 +7,7 @@ An MCP server for Hyprland desktop control. An AI agent uses it to see your desk
 The server gives an agent these tools:
 
 - **See the desktop.** List every window, including windows on other workspaces. Capture any window, even one that is occluded or hidden. The capture does not disturb the app.
-- **Type and click.** Send text, key chords, mouse clicks, and clipboard paste. The click path uses a native plugin when it is loaded (see below).
+- **Type and click.** Send text, key chords, mouse clicks, and clipboard paste. The click path uses a native plugin when it is loaded (see below). Screenshots and input are refused while the screen is locked (`SESSION_LOCKED`); read-only queries still answer.
 - **Launch and control.** Start apps, move them to a private agent workspace, focus, close.
 
 ## The agent workspace

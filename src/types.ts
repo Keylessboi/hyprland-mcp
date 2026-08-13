@@ -86,6 +86,7 @@ export type ErrorCode =
   | 'APP_LAUNCH_TIMEOUT'
   | 'PERMISSION_DENIED'
   | 'INVALID_ARGUMENTS'
+  | 'SESSION_LOCKED'
   | 'UNKNOWN';
 
 export interface McpError {

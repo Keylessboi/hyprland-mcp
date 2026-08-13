@@ -80,6 +80,14 @@ The server runs over stdio. The opencode session is the auth boundary. Two rules
 
 Screenshots land in a private directory with a short lifetime. Clipboard reads are gated because they may hold secrets.
 
+## The lock guard
+
+A locked screen is an input hazard. Under hyprlock the seat focus is the lock surface, so a click lands on the lock screen and typed text can enter the password field.
+
+The server asks the compositor for its own lock state (`hyprctl locked`, from the session-lock manager) before every screenshot and every input tool. Locked means refusal: the tool returns `SESSION_LOCKED`. The check fails closed — if the query itself errors, the server also refuses, because it cannot confirm the session is safe.
+
+Read-only queries (`get_state`, `list_windows`) still answer while locked. Only capture and input are gated.
+
 ## Error contract
 
 Every tool returns `{ ok, error, hint, recoverable }` on failure. The common failure is silent wrongness: a black screenshot, a stale window, a click 40 pixels off. The server checks for these signs where it can and reports them instead of returning a false success.

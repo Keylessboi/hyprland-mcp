@@ -98,3 +98,13 @@ systemctl --user restart hyprland-mcp.service
 **Cause.** A known issue with virtio DRM and software rendering.
 
 **Fix.** Try the workarounds in order: restart Hyprland cleanly, set a fixed monitor mode, and as a last resort run the tests through `hyprctl` with an explicit `HYPRLAND_INSTANCE_SIGNATURE`. The full procedure is in `docs/test-vm.md`.
+
+## Screenshots and input fail with SESSION_LOCKED
+
+**Symptom.** `screenshot` and the input tools return `SESSION_LOCKED`. The error says the desktop is locked.
+
+**Cause.** The screen is locked (hyprlock or another session lock). This is the server working as designed: while locked, the seat focus is the lock surface, so a click would land on the lock screen and typed text could enter the password field. The server refuses instead.
+
+**Fix.** Unlock the screen, then retry. Read-only queries (`get_state`, `list_windows`) still work while locked.
+
+**Why it fails closed.** If the server cannot confirm the session is unlocked (the `locked` query itself errors), it also refuses. Safer to refuse than to risk typing into a password field.

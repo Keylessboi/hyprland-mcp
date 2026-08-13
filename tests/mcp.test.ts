@@ -54,6 +54,7 @@ beforeEach(async () => {
       'j/activewindowv2': JSON.stringify({ address: '0x55dfd4972540' }),
       'cursorpos': '960, 540',
       'version': 'Hyprland 0.56.2',
+      'j/locked': JSON.stringify({ locked: false }),
       'dispatch *': 'ok',
     },
   });
@@ -199,5 +200,32 @@ describe('MCP server over protocol', () => {
     // the file is a real image artifact, not the empty capture
     const bytes = fs.readFileSync(sc.result.file);
     expect(bytes.length).toBeGreaterThan(8);
+  });
+
+  it('input and screenshot tools refuse with SESSION_LOCKED while the desktop is locked', async () => {
+    fake.respond['j/locked'] = JSON.stringify({ locked: true });
+
+    const shot = await client.callTool({ name: 'screenshot', arguments: { target: 'screen' } });
+    expect(shot.isError).toBe(true);
+    const shotSc = shot.structuredContent as { error: { code: string } };
+    expect(shotSc.error.code).toBe('SESSION_LOCKED');
+
+    const click = await client.callTool({ name: 'input_click', arguments: { target: 'gajim' } });
+    const clickSc = click.structuredContent as { error: { code: string } };
+    expect(clickSc.error.code).toBe('SESSION_LOCKED');
+
+    const type = await client.callTool({ name: 'input_type', arguments: { text: 'hello', target: 'gajim' } });
+    const typeSc = type.structuredContent as { error: { code: string } };
+    expect(typeSc.error.code).toBe('SESSION_LOCKED');
+
+    // no input or capture actually reached the compositor
+    expect(inputFake.calls).toHaveLength(0);
+  });
+
+  it('input tools work normally while the desktop is unlocked', async () => {
+    const res = await client.callTool({ name: 'input_type', arguments: { text: 'hi', target: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+    expect(inputFake.calls.some((c) => c[0] === 'wtype')).toBe(true);
   });
 });

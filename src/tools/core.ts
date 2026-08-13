@@ -10,6 +10,7 @@ import type { ServerDeps } from '../index.js';
 import { spawnDetached, runCommand } from '../index.js';
 import { HyprError, err, ok } from '../types.js';
 import { assertNotDenied, assertExecAllowed } from '../security.js';
+import { assertNotLocked } from '../lock.js';
 import { LogicalRect } from '../geometry.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -297,6 +298,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ target, window, geometry, jpeg }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         const monitors = (await ipc.json<{ id: number; name: string; x: number; y: number; width: number; height: number; scale: number }[]>('monitors')).map((m) => ({ id: m.id, name: m.name, x: m.x, y: m.y, w: m.width, h: m.height, scale: m.scale }));
         const geo: LogicalRect[] = monitors.map((m) => ({ x: m.x, y: m.y, w: m.w, h: m.h }));
         void geo;
@@ -391,6 +393,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ x, y, button, target, via_overlay }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         // Fast path: with the hyprland-mcp-click plugin loaded, a single atomic
         // `sendclick` dispatch handles both visible and hidden windows (flash-free
         // overlay, workspace restore, no ydotool). The plugin clicks the window
@@ -454,6 +457,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ text, target }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         if (target !== undefined) {
           const { address } = await resolveUnique(deps, target, 'input_type');
           const s = await state.snapshot();
@@ -488,6 +492,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ chord, target, mods }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         if (target !== undefined && mods) {
           const { address } = await resolveUnique(deps, target, 'input_key');
           const key = chord.toLowerCase();
@@ -523,6 +528,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ text, target }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         if (!config.allowClipboardPaste) {
           throw new HyprError('PERMISSION_DENIED', 'clipboard paste disabled in config');
         }
@@ -555,6 +561,7 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     async ({ start_x, start_y, end_x, end_y, button }) => {
       const start = Date.now();
       try {
+        await assertNotLocked(ipc);
         await input.drag(start_x, start_y, end_x, end_y, button);
         return { content: [{ type: 'text', text: JSON.stringify({ dragged: true, from: [start_x, start_y], to: [end_x, end_y] }) }], structuredContent: ok('input_drag', { from: [start_x, start_y], to: [end_x, end_y] }, start) } as const;
       } catch (e) {
