@@ -12,6 +12,7 @@ import { HyprError, err, ok } from '../types.js';
 import { assertNotDenied, assertExecAllowed } from '../security.js';
 import { assertNotLocked } from '../lock.js';
 import { LogicalRect } from '../geometry.js';
+import type { ScreenshotResult } from '../screenshot.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -56,6 +57,28 @@ async function writeScreenshot(dir: string, format: string, addressOrTag: string
 // instead of 4 roundtrips + a sleep + ydotool. Cached per ipc instance for the
 // lifetime of the process (plugins rarely hot-load mid-session).
 const sendclickCache = new WeakMap<object, boolean>();
+
+// Capture a window for OCR / click targeting. Prefers grim -T (toplevel
+// export): it captures the window surface even when the window is on another
+// workspace or occluded, WITHOUT switching the user's workspace or disturbing
+// the app. Falls back to grim -g region crop when -T is unavailable.
+// Returns the capture plus the window's on-screen region (for coordinate math).
+async function captureWindowForTarget(
+  screenshots: { toplevel: (id: string, timeoutMs?: number) => Promise<ScreenshotResult>; region: (r: LogicalRect, opts?: { jpeg?: boolean; timeoutMs?: number }) => Promise<ScreenshotResult> },
+  w: { stableId?: string; at: [number, number]; size: [number, number] },
+  regionCapture: () => Promise<ScreenshotResult>,
+): Promise<{ cap: ScreenshotResult; region: LogicalRect }> {
+  const region: LogicalRect = { x: w.at[0]!, y: w.at[1]!, w: w.size[0]!, h: w.size[1]! };
+  if (w.stableId) {
+    try {
+      const cap = await screenshots.toplevel(w.stableId);
+      return { cap, region };
+    } catch {
+      // fall through to region crop
+    }
+  }
+  return { cap: await regionCapture(), region };
+}
 
 async function probeSendclick(ipc: { request: (req: string) => Promise<string> }): Promise<boolean> {
   const cached = sendclickCache.get(ipc);
@@ -174,7 +197,10 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
           // available (the compositor forks), so wait_for_window matches by
           // class, and cleanup goes through close/kill on the window.
           const wsSpec = String(workspace);
-          await ipc.dispatch(['exec', `[workspace ${wsSpec}] ${quoteJoin([command, ...args])}`]);
+          // silent: open on the target workspace WITHOUT stealing focus or
+          // switching the user's active workspace (verified: active ws stays
+          // put; the app lands on the named workspace unfocused)
+          await ipc.dispatch(['exec', `[workspace ${wsSpec} silent] ${quoteJoin([command, ...args])}`]);
           if (!wait_for_window) {
             return { content: [{ type: 'text', text: JSON.stringify({ workspace: wsSpec }) }], structuredContent: ok('launch', { workspace: wsSpec, waited: false }, start) } as const;
           }
@@ -458,9 +484,10 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
           const s = await state.snapshot();
           const w = s.clients.find((c) => c.address === address);
           if (!w) throw new HyprError('WINDOW_NOT_FOUND', 'window vanished before capture');
-          region = { x: w.at[0], y: w.at[1], w: w.size[0], h: w.size[1] };
-          origin = { x: w.at[0], y: w.at[1] };
-          cap = await screenshots.region(region);
+          const captured = await captureWindowForTarget(screenshots, w, () => screenshots.region({ x: w.at[0], y: w.at[1], w: w.size[0], h: w.size[1] }));
+          cap = captured.cap;
+          region = captured.region;
+          origin = { x: region.x, y: region.y };
         } else if (target === 'region') {
           if (!geometry) throw new HyprError('INVALID_ARGUMENTS', 'read_text_on_screen target=region requires geometry {x,y,w,h}');
           region = geometry;
@@ -521,9 +548,11 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
         void targetForCapture;
 
         const monitors = (await ipc.json<{ x: number; y: number; width: number; height: number; scale: number }[]>('monitors')).map((m) => ({ x: m.x, y: m.y, w: m.width, h: m.height, scale: m.scale }));
+        const cap = window !== undefined && w
+          ? (await captureWindowForTarget(screenshots, w, () => screenshots.region({ x: w.at[0], y: w.at[1], w: w.size[0], h: w.size[1] }))).cap
+          : await screenshots.region(region);
         const mo = monitors.find((m) => region.x >= m.x && region.x < m.x + m.w && region.y >= m.y && region.y < m.y + m.h) ?? monitors[0];
         const scale = mo?.scale ?? 1;
-        const cap = await screenshots.region(region);
         const { words } = await ocr.readImage(cap.data);
         const needle = text.toLowerCase();
         const hits = words.filter((word) => word.text.toLowerCase().includes(needle));

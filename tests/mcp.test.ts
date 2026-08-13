@@ -251,7 +251,7 @@ describe('MCP server over protocol', () => {
     // does not split the title with a space
     const execCall = fake.received().find((r) => r.startsWith('dispatch exec'));
     expect(execCall).toBeTruthy();
-    expect(execCall).toContain('[workspace name:agent]');
+    expect(execCall).toContain('[workspace name:agent silent]');
     expect(execCall).toContain("--title 'agent shell'");
     expect(execCall).not.toContain('--title agent shell');
   });
@@ -266,7 +266,7 @@ describe('MCP server over protocol', () => {
     expect(sc.ok).toBe(true);
     expect(sc.result.workspace).toBe('5');
     const execCall = fake.received().find((r) => r.startsWith('dispatch exec'));
-    expect(execCall).toContain('[workspace 5]');
+    expect(execCall).toContain('[workspace 5 silent]');
   });
 
   // LAUNCH-01: wait_for_window poll resolves the named workspace id
