@@ -12,6 +12,7 @@ import { HyprIpc } from './ipc.js';
 import { HyprEventStream } from './events.js';
 import { DesktopStateStore } from './state.js';
 import { Screenshotter, RealCommandRunner } from './screenshot.js';
+import { OcrEngine } from './ocr.js';
 import { InputController, RealInputRunner, HyprFocusGuard } from './input.js';
 import { loadConfig, assertNotDenied, assertExecAllowed } from './security.js';
 import { monitorGeometry } from './geometry.js';
@@ -24,6 +25,7 @@ export interface ServerDeps {
   events: HyprEventStream;
   state: DesktopStateStore;
   screenshots: Screenshotter;
+  ocr: OcrEngine;
   input: InputController;
   config: ReturnType<typeof loadConfig>;
   serverVersion: string;
@@ -68,6 +70,7 @@ export async function main(): Promise<void> {
   const state = new DesktopStateStore(ipc);
   const monitors = (await ipc.json<{ id: number; name: string; x: number; y: number; width: number; height: number; scale: number }[]>('monitors')).map(monitorGeometry);
   const screenshots = new Screenshotter(new RealCommandRunner(), monitors);
+  const ocr = new OcrEngine(new RealCommandRunner());
   const input = new InputController(ipc, new RealInputRunner(), new HyprFocusGuard(ipc), {
     allowUnicodePaste: config.allowClipboardPaste,
   });
@@ -77,6 +80,7 @@ export async function main(): Promise<void> {
     events,
     state,
     screenshots,
+    ocr,
     input,
     config,
     serverVersion: '0.1.0',

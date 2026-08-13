@@ -88,6 +88,15 @@ beforeEach(async () => {
     events,
     state,
     screenshots,
+    ocr: {
+      async readImage() {
+        return { text: 'Save Changes Cancel', words: [
+          { text: 'Save', left: 21, top: 42, width: 42, height: 10, confidence: 90 },
+          { text: 'Changes', left: 44, top: 42, width: 42, height: 10, confidence: 90 },
+          { text: 'Cancel', left: 90, top: 42, width: 50, height: 10, confidence: 90 },
+        ] };
+      },
+    } as never,
     input,
     config: { ...loadConfig(), screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-shot-')) },
     serverVersion: 'test',
@@ -292,5 +301,58 @@ describe('MCP server over protocol', () => {
     const sc = res.structuredContent as { ok: boolean };
     expect(sc.ok).toBe(true);
     expect(fake.received().filter((r) => r.startsWith('dispatch exec'))).toHaveLength(0);
+  });
+
+  it('read_text_on_screen returns OCR text and word boxes in logical coordinates', async () => {
+    // window 'gajim' at [960,0] size [960,1080], scale 1 → logical == pixel offset
+    const res = await client.callTool({ name: 'read_text_on_screen', arguments: { target: 'window', window: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean; result: { text: string; words: { text: string; logical: { x: number; y: number } }[] } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.text).toContain('Save');
+    // word "Save" at pixel (21,42) in the window at x=960 → logical x = 960+21
+    expect(sc.result.words[0]!.text).toBe('Save');
+    expect(sc.result.words[0]!.logical.x).toBe(960 + 21);
+  });
+
+  it('click_text finds text and clicks its center via sendclick', async () => {
+    // "Save" word: pixel (21,42,42,10) in window at x=960,y=0 → center (960+21+21, 0+42+5)
+    const res = await client.callTool({ name: 'click_text', arguments: { text: 'Save', window: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean; result: { x: number; y: number; address: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.x).toBe(960 + 21 + 21);
+    expect(sc.result.y).toBe(0 + 42 + 5);
+    const sendclick = fake.received().find((r) => r.startsWith('dispatch sendclick'));
+    expect(sendclick).toBeTruthy();
+    expect(sendclick).toContain(`x:${sc.result.x},y:${sc.result.y}`);
+  });
+
+  it('click_text errors with TEXT_NOT_FOUND when the text is absent', async () => {
+    const res = await client.callTool({ name: 'click_text', arguments: { text: 'DefinitelyNotHere', window: 'gajim' } });
+    expect(res.isError).toBe(true);
+    const sc = res.structuredContent as { error: { code: string } };
+    expect(sc.error.code).toBe('TEXT_NOT_FOUND');
+  });
+
+  it('wait_for returns immediately when a window already exists', async () => {
+    const res = await client.callTool({ name: 'wait_for', arguments: { window: 'gajim', timeout_ms: 2000 } });
+    const sc = res.structuredContent as { ok: boolean; result: { matched: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.matched).toBe('window');
+  });
+
+  it('wait_for times out with WAIT_TIMEOUT when the condition never holds', async () => {
+    const res = await client.callTool({ name: 'wait_for', arguments: { window: 'does-not-exist', timeout_ms: 200, poll_ms: 50 } });
+    expect(res.isError).toBe(true);
+    const sc = res.structuredContent as { error: { code: string } };
+    expect(sc.error.code).toBe('WAIT_TIMEOUT');
+  });
+
+  it('window tool dispatches resize and move with address selectors', async () => {
+    await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'resize', w: 800, h: 600 } });
+    expect(fake.received().some((r) => r.startsWith('dispatch resizewindowpixel 800x600,address:0x55dfd4972540'))).toBe(true);
+    await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'move', x: 100, y: 200 } });
+    expect(fake.received().some((r) => r.startsWith('dispatch movewindowpixel 100,200,address:0x55dfd4972540'))).toBe(true);
+    await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'fullscreen' } });
+    expect(fake.received().some((r) => r.startsWith('dispatch fullscreen 1 address:0x55dfd4972540'))).toBe(true);
   });
 });
