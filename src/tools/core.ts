@@ -72,6 +72,20 @@ async function probeSendclick(ipc: { request: (req: string) => Promise<string> }
   return available;
 }
 
+// Quote-join argv into a single shell string for `dispatch exec`. Hyprland
+// runs exec through /bin/sh -c, so each arg must survive the shell. This is
+// the plan's rule: validate + quote server-side, never build from window
+// titles or other untrusted text.
+function quoteJoin(argv: string[]): string {
+  return argv
+    .map((a) => {
+      if (/^[a-zA-Z0-9_\/.@%+=:-]+$/.test(a))
+        return a;
+      return `'${a.replace(/'/g, `'\\''`)}'`;
+    })
+    .join(' ');
+}
+
 // ─── tool registration ──────────────────────────────────────────────────────
 
 export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
@@ -140,19 +154,54 @@ export function registerCoreTools(server: McpServer, deps: ServerDeps): void {
     'launch',
     {
       title: 'Launch app',
-      description: 'Launch an app as a detached child with the session environment, optionally waiting for its window. Returns the real pid (process group) — never the surface pid.',
+      description: 'Launch an app, optionally into a specific workspace. Prefer launching into a dedicated agent workspace (name:agent) so the app never appears on the user\'s screen. With workspace set, the app opens directly on that workspace; without it, the app opens on the current one.',
       inputSchema: z.object({
         command: z.string().describe('Executable name or absolute path'),
         args: z.array(z.string()).default([]),
+        workspace: z.union([z.number().int(), z.string()]).optional().describe('Launch the app directly onto this workspace. A number is a workspace ID (positive = regular, negative = special/named). A string is a Hyprland selector: name:agent creates a named workspace on demand; special:name targets a scratchpad. The app never appears on the current workspace.'),
         wait_for_window: z.boolean().default(true),
         timeout_ms: z.number().int().default(10000),
       }),
       annotations: { destructiveHint: true },
     },
-    async ({ command, args, wait_for_window, timeout_ms }) => {
+    async ({ command, args, workspace, wait_for_window, timeout_ms }) => {
       const start = Date.now();
       try {
         assertExecAllowed(config, command);
+        if (workspace !== undefined) {
+          // Atomic placement: Hyprland opens the window on the target
+          // workspace directly via the exec rule. No server-side pid is
+          // available (the compositor forks), so wait_for_window matches by
+          // class, and cleanup goes through close/kill on the window.
+          const wsSpec = String(workspace);
+          await ipc.dispatch(['exec', `[workspace ${wsSpec}] ${quoteJoin([command, ...args])}`]);
+          if (!wait_for_window) {
+            return { content: [{ type: 'text', text: JSON.stringify({ workspace: wsSpec }) }], structuredContent: ok('launch', { workspace: wsSpec, waited: false }, start) } as const;
+          }
+          // Resolve the target workspace's id for the poll. A name: selector
+          // gets a -1337-class id that the snapshot reports by that id.
+          const resolveWsId = (s: { workspaces: { id: number; name: string }[] }): number | undefined => {
+            if (typeof workspace === 'number')
+              return workspace;
+            const clean = workspace.startsWith('name:') ? workspace.slice(5) : workspace;
+            return s.workspaces.find((w) => w.name === clean)?.id;
+          };
+          const deadline = Date.now() + timeout_ms;
+          const classMatch = command.toLowerCase().split('/').pop()!.toLowerCase();
+          while (Date.now() < deadline) {
+            const s = await state.snapshot();
+            const wsId = resolveWsId(s);
+            const match = s.clients.find((c) => c.class.toLowerCase().includes(classMatch) && (wsId === undefined || c.workspace.id === wsId));
+            if (match) {
+              return { content: [{ type: 'text', text: JSON.stringify({ workspace: wsSpec, window: { address: match.address, class: match.class } }) }], structuredContent: ok('launch', { workspace: wsSpec, window: match.address, waited: true }, start) } as const;
+            }
+            await new Promise((r) => setTimeout(r, 200));
+          }
+          throw new HyprError('APP_LAUNCH_TIMEOUT', `launched into workspace ${wsSpec} but no window appeared in ${timeout_ms}ms`, {
+            hint: `The process may still be starting, or crashed. Check with list_windows / get_state.`,
+            recoverable: false,
+          });
+        }
         const sig = process.env.HYPRLAND_INSTANCE_SIGNATURE ?? '';
         const env = {
           WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? '',

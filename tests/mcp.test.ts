@@ -228,4 +228,69 @@ describe('MCP server over protocol', () => {
     expect(sc.ok).toBe(true);
     expect(inputFake.calls.some((c) => c[0] === 'wtype')).toBe(true);
   });
+
+  // LAUNCH-01 (scenarios/launch-into-workspace.md): named-workspace launch
+  it('launch with workspace name:agent dispatches exec [workspace name:agent] and quotes args', async () => {
+    const res = await client.callTool({
+      name: 'launch',
+      arguments: { command: 'kitty', args: ['--title', 'agent shell'], workspace: 'name:agent', wait_for_window: false },
+    });
+    const sc = res.structuredContent as { ok: boolean; result: { workspace: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.workspace).toBe('name:agent');
+    // the app must be placed on the agent workspace, quoted so the shell
+    // does not split the title with a space
+    const execCall = fake.received().find((r) => r.startsWith('dispatch exec'));
+    expect(execCall).toBeTruthy();
+    expect(execCall).toContain('[workspace name:agent]');
+    expect(execCall).toContain("--title 'agent shell'");
+    expect(execCall).not.toContain('--title agent shell');
+  });
+
+  // LAUNCH-01: numeric id form
+  it('launch with numeric workspace id dispatches exec [workspace N]', async () => {
+    const res = await client.callTool({
+      name: 'launch',
+      arguments: { command: 'kitty', workspace: 5, wait_for_window: false },
+    });
+    const sc = res.structuredContent as { ok: boolean; result: { workspace: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.workspace).toBe('5');
+    const execCall = fake.received().find((r) => r.startsWith('dispatch exec'));
+    expect(execCall).toContain('[workspace 5]');
+  });
+
+  // LAUNCH-01: wait_for_window poll resolves the named workspace id
+  it('launch with name:agent and wait_for_window matches a window on the resolved named workspace', async () => {
+    // a named workspace resolves to a -1337-class id in the snapshot
+    fake.respond['j/workspaces'] = JSON.stringify([
+      { id: 1, name: '1', windows: 0 },
+      { id: -1337, name: 'agent', windows: 1 },
+    ]);
+    fake.respond['j/clients'] = JSON.stringify([
+      {
+        address: '0x55dfd4972540', class: 'kitty', initialClass: 'kitty', title: 'agent shell', initialTitle: '', pid: 9001,
+        at: [0, 0], size: [640, 480], workspace: { id: -1337, name: 'agent' }, floating: false, pseudo: false, monitor: 0,
+        xwayland: false, pinned: false, fullscreen: false, fullscreenClient: 0, grouped: [], tags: [],
+        swallowing: '0', focusHistoryID: 0, hidden: false, minimized: false, mapped: true, stableId: 'stable-kitty',
+      },
+    ]);
+    const res = await client.callTool({
+      name: 'launch',
+      arguments: { command: 'kitty', workspace: 'name:agent', wait_for_window: true, timeout_ms: 3000 },
+    });
+    const sc = res.structuredContent as { ok: boolean; result: { window: string } };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.window).toBe('0x55dfd4972540');
+  });
+
+  it('launch without workspace keeps the current behavior (no exec dispatch)', async () => {
+    const res = await client.callTool({
+      name: 'launch',
+      arguments: { command: '/bin/true', wait_for_window: false },
+    });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+    expect(fake.received().filter((r) => r.startsWith('dispatch exec'))).toHaveLength(0);
+  });
 });
