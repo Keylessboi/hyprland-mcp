@@ -47,8 +47,8 @@ When you need a screenshot, call the screenshot tool. It returns a file path in 
 
 WORK IN YOUR OWN WORKSPACE. The user is working on their workspace right now. Do not touch it.
 - Do not switch the user's active workspace. Do not steal focus from the user's windows.
-- Run the app you are testing on a dedicated agent workspace (a negative id, e.g. -42). Use the workspace tool's silent form (window + id, no view switch) to move it there.
-- Launch the app there, test it there, screenshot it there, close it there. Return the workspace to a clean state when done.
+- Launch apps with the launch tool's workspace parameter, pointing at a dedicated agent workspace (name:agent). The app opens there directly and never appears on the user's screen. Prefer this over launching into the current workspace and moving afterward.
+- Test the app there, screenshot it there, close it there. Return the workspace to a clean state when done.
 - Only interact with a window on the user's workspace when the task explicitly requires it, and restore focus and workspace afterward.`;
 
 export function buildServer(deps: ServerDeps): McpServer {

@@ -14,11 +14,10 @@ The server gives an agent these tools:
 
 The agent works on its own workspace. You work on yours. The agent reads windows, takes screenshots, and sends input to its workspace. Your view never changes.
 
-Launch an app into the agent workspace and move it there:
+Launch an app into the agent workspace in one step (the named workspace is created on demand):
 
 ```
-launch { command: "foot", args: ["--title", "agent-shell"], wait_for_window: true }
-workspace { id: -42, window: "foot" }
+launch { command: "foot", args: ["--title", "agent-shell"], workspace: "name:agent", wait_for_window: true }
 ```
 
 The agent sees the window wherever it sits. No focus change. No workspace switch.
