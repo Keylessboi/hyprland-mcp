@@ -108,6 +108,19 @@ A KVM VM runs Hyprland for live smoke tests. The full setup guide is in `docs/te
 - `docs/troubleshooting.md` — common failures and fixes
 - `docs/test-vm.md` — VM setup
 
+## Skills
+
+Two agent skills ship in this repo and sync to the local opencode collection:
+
+- `skills/hyprland-agent-workspace` — work on a dedicated named workspace so the user's screen stays untouched. Launch with `workspace: "name:agent"`, verify placement, clean up.
+- `skills/hyprland-tester` — the desktop test loop: capture, vision-analyze, act, verify.
+
+The repo is the canonical source. After changing a skill, reinstall it locally:
+
+```sh
+./scripts/sync-skills.sh
+```
+
 ## License
 
 MIT
