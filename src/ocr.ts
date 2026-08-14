@@ -36,7 +36,7 @@ const MIN_CONFIDENCE = 60;
 /** Parse tesseract TSV output. Skips the header and non-word rows. */
 export function parseTsv(csv: string): OcrWord[] {
   const lines = csv.split('\n');
-  if (lines.length < 2 || !lines[0]!.startsWith('level'))
+  if (!lines[0]!.startsWith('level'))
     return [];
   const words: OcrWord[] = [];
   for (let i = 1; i < lines.length; i++) {

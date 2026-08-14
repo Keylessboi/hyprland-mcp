@@ -15,6 +15,7 @@ import { Screenshotter } from '../src/screenshot.js';
 import { InputController, type InputBackend } from '../src/input.js';
 import { loadConfig } from '../src/security.js';
 import { buildServer, type ServerDeps } from '../src/index.js';
+import { AuditLog } from '../src/audit.js';
 import { startFakeHyprland, type FakeHyprland } from './harness.js';
 import { monitorGeometry } from '../src/geometry.js';
 import fs from 'node:fs';
@@ -43,6 +44,79 @@ let fake: FakeHyprland;
 let client: Client;
 let inputFake: FakeInput;
 let fakes: FakeHyprland[] = [];
+let mutableConfig: ReturnType<typeof loadConfig>;
+
+function setConfig(overrides: Partial<ReturnType<typeof loadConfig>>): void {
+  Object.assign(mutableConfig, overrides);
+}
+
+/** Build a fresh server+client with the config baked in at registration time.
+ *  Registration-time policies (tools.allow/exclude, readOnly) are fixed when
+ *  tools register, so they need a server built with the config from the start. */
+async function makeServer(cfgOverride: Partial<ReturnType<typeof loadConfig>>): Promise<Client> {
+  const f = await startFakeHyprland({
+    respond: {
+      'j/monitors': MONITORS,
+      'j/workspaces': JSON.stringify([{ id: 1, name: '1', windows: 1 }, { id: 2, name: '2', windows: 1 }]),
+      'j/clients': CLIENTS,
+      'j/activewindow': JSON.stringify({}),
+      'j/activewindowv2': JSON.stringify({ address: '0x55dfd4972540' }),
+      'cursorpos': '960, 540',
+      'version': 'Hyprland 0.56.2',
+      'j/locked': JSON.stringify({ locked: false }),
+      'dispatch *': 'ok',
+    },
+  });
+  fakes.push(f);
+  const ipc = new HyprIpc({ socketDir: f.dir });
+  const events = new HyprEventStream({ socketDir: f.dir });
+  const state = new DesktopStateStore(ipc);
+  const monitors = JSON.parse(MONITORS).map(monitorGeometry);
+  const screenshots = new Screenshotter(
+    {
+      async run(bin: string, args: string[]) {
+        void bin;
+        void args;
+        return { stdout: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]), stderr: '', code: 0 };
+      },
+    },
+    monitors,
+  );
+  const input = new InputController(
+    ipc,
+    new FakeInput(),
+    { async assertFocused() { /* fake guard passes */ } },
+    { allowUnicodePaste: true },
+  );
+  const cfg = { ...loadConfig(), screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-shot-')), ...cfgOverride };
+  const deps: ServerDeps = {
+    ipc,
+    events,
+    state,
+    screenshots,
+    ocr: {
+      async readImage() {
+        return { text: 'Save Changes Cancel', words: [
+          { text: 'Save', left: 21, top: 42, width: 42, height: 10, confidence: 90 },
+          { text: 'Changes', left: 44, top: 42, width: 42, height: 10, confidence: 90 },
+          { text: 'Cancel', left: 90, top: 42, width: 50, height: 10, confidence: 90 },
+        ] };
+      },
+    } as never,
+    input,
+    config: cfg,
+    audit: new AuditLog(cfg.session.auditPath),
+    serverVersion: 'test',
+  };
+  const server = buildServer(deps);
+  const factory: McpServerFactory = () => server;
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const c = new Client({ name: 'test-client', version: '1.0.0' });
+  await factory();
+  await server.connect(st);
+  await c.connect(ct);
+  return c;
+}
 
 beforeEach(async () => {
   fake = await startFakeHyprland({
@@ -99,8 +173,10 @@ beforeEach(async () => {
     } as never,
     input,
     config: { ...loadConfig(), screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-shot-')) },
+    audit: new AuditLog(path.join(os.tmpdir(), `hypr-audit-${Date.now()}`, 'audit.jsonl')),
     serverVersion: 'test',
   };
+  mutableConfig = deps.config;
 
   const server = buildServer(deps);
   const factory: McpServerFactory = () => server;
@@ -306,12 +382,23 @@ describe('MCP server over protocol', () => {
   it('read_text_on_screen returns OCR text and word boxes in logical coordinates', async () => {
     // window 'gajim' at [960,0] size [960,1080], scale 1 → logical == pixel offset
     const res = await client.callTool({ name: 'read_text_on_screen', arguments: { target: 'window', window: 'gajim' } });
-    const sc = res.structuredContent as { ok: boolean; result: { text: string; words: { text: string; logical: { x: number; y: number } }[] } };
+    const sc = res.structuredContent as { ok: boolean; untrustedSource?: true; result: { text: string; words: { text: string; logical: { x: number; y: number } }[] } };
     expect(sc.ok).toBe(true);
     expect(sc.result.text).toContain('Save');
     // word "Save" at pixel (21,42) in the window at x=960 → logical x = 960+21
     expect(sc.result.words[0]!.text).toBe('Save');
     expect(sc.result.words[0]!.logical.x).toBe(960 + 21);
+    // OCR content is untrusted observation (anti-prompt-injection provenance)
+    expect(sc.untrustedSource).toBe(true);
+  });
+
+  it('get_state and list_windows mark window-title results as untrusted source', async () => {
+    const gs = await client.callTool({ name: 'get_state', arguments: {} });
+    const gssc = gs.structuredContent as { untrustedSource?: true };
+    expect(gssc.untrustedSource).toBe(true);
+    const lw = await client.callTool({ name: 'list_windows', arguments: {} });
+    const lwsc = lw.structuredContent as { untrustedSource?: true };
+    expect(lwsc.untrustedSource).toBe(true);
   });
 
   it('click_text finds text and clicks its center via sendclick when the plugin is loaded', async () => {
@@ -364,5 +451,152 @@ describe('MCP server over protocol', () => {
     expect(fake.received().some((r) => r.startsWith('dispatch movewindowpixel 100,200,address:0x55dfd4972540'))).toBe(true);
     await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'fullscreen' } });
     expect(fake.received().some((r) => r.startsWith('dispatch fullscreen 1 address:0x55dfd4972540'))).toBe(true);
+  });
+
+  // P0b: denyClasses + windowScope enforced at resolveUnique (and kill)
+  it('focus on a deny-listed class returns PERMISSION_DENIED with rule', async () => {
+    setConfig({ denyClasses: ['gajim'] });
+    const res = await client.callTool({ name: 'focus', arguments: { target: 'gajim' } });
+    expect(res.isError).toBe(true);
+    const sc = res.structuredContent as { error: { code: string }; rule?: string; windowClass?: string };
+    expect(sc.error.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('denyClasses');
+    expect(sc.windowClass).toBe('org.gajim.Gajim');
+    // and nothing reached the compositor
+    expect(fake.received().filter((r) => r.startsWith('dispatch focuswindow'))).toHaveLength(0);
+  });
+
+  it('focus on a class outside windowScope returns PERMISSION_DENIED', async () => {
+    setConfig({ windowScope: ['foot', 'kitty'] });
+    const res = await client.callTool({ name: 'focus', arguments: { target: 'gajim' } });
+    const sc = res.structuredContent as { error: { code: string }; rule?: string };
+    expect(sc.error.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('windowScope');
+  });
+
+  it('windowScope allows in-scope classes', async () => {
+    setConfig({ windowScope: ['gajim'] });
+    const res = await client.callTool({ name: 'focus', arguments: { target: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+    expect(fake.received().some((r) => r.startsWith('dispatch focuswindow address:0x55dfd4972540'))).toBe(true);
+  });
+
+  it('kill resolves pid to class and enforces denyClasses', async () => {
+    setConfig({ denyClasses: ['gajim'] });
+    const res = await client.callTool({ name: 'kill', arguments: { pid: 93753 } });
+    const sc = res.structuredContent as { error: { code: string }; rule?: string };
+    expect(sc.error.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('denyClasses');
+  });
+
+  // P0e: health reports effective policy; strict exec fails closed
+  it('health reports the effective policy surface', async () => {
+    setConfig({ denyClasses: ['gajim'], windowScope: ['foot'], dispatchAllow: ['focuswindow'], readOnly: false, strict: false });
+    const res = await client.callTool({ name: 'health', arguments: {} });
+    const sc = res.structuredContent as {
+      ok: boolean;
+      result: {
+        capabilities: Record<string, boolean>;
+        toolsAllow: string[];
+        dispatchAllow: string[];
+        denyClasses: string[];
+        windowScope: string[];
+        readOnly: boolean;
+        strict: boolean;
+        auditPath: string;
+        killSwitchFile: string;
+        policyDrift: boolean;
+      };
+    };
+    expect(sc.ok).toBe(true);
+    expect(sc.result.denyClasses).toEqual(['gajim']);
+    expect(sc.result.windowScope).toEqual(['foot']);
+    expect(sc.result.dispatchAllow).toEqual(['focuswindow']);
+    expect(sc.result.readOnly).toBe(false);
+    expect(typeof sc.result.auditPath).toBe('string');
+    expect(typeof sc.result.policyDrift).toBe('boolean');
+  });
+
+  it('strict mode refuses exec with empty prefixes (launch)', async () => {
+    setConfig({ strict: true, execAllowPrefixes: [] });
+    const res = await client.callTool({ name: 'launch', arguments: { command: 'firefox', wait_for_window: false } });
+    const sc = res.structuredContent as { error: { code: string } };
+    expect(sc.error.code).toBe('PERMISSION_DENIED');
+  });
+
+  it('strict mode still allows exec with matching prefixes', async () => {
+    setConfig({ strict: true, execAllowPrefixes: ['/bin/true'] });
+    const res = await client.callTool({ name: 'launch', arguments: { command: '/bin/true', wait_for_window: false } });
+    const sc = res.structuredContent as { ok: boolean };
+    expect(sc.ok).toBe(true);
+  });
+
+  // P0c: the gatedRegister chokepoint — caps, kill-switch, tools.allow/exclude, readOnly, audit
+  it('capabilities.input=false denies input tools with rule', async () => {
+    setConfig({ capabilities: { ...loadConfig().capabilities, input: false } });
+    const res = await client.callTool({ name: 'input_type', arguments: { text: 'hi', target: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean; error: { code: string } | undefined; rule?: string };
+    expect(sc.ok).toBe(false);
+    expect(sc.error?.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('capabilities.input');
+    expect(inputFake.calls.filter((c) => c[0] === 'wtype')).toHaveLength(0);
+  });
+
+  it('capabilities.destructive=false denies close', async () => {
+    setConfig({ capabilities: { ...loadConfig().capabilities, destructive: false } });
+    const res = await client.callTool({ name: 'close', arguments: { target: 'gajim' } });
+    const sc = res.structuredContent as { ok: boolean; error: { code: string } | undefined; rule?: string };
+    expect(sc.ok).toBe(false);
+    expect(sc.error?.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('capabilities.destructive');
+  });
+
+  it('kill-switch file freezes mutators but not observers', async () => {
+    const kill = path.join(os.tmpdir(), `hypr-stop-${Date.now()}`);
+    fs.writeFileSync(kill, '');
+    setConfig({ session: { ...loadConfig().session, killSwitchFile: kill } });
+    const focus = await client.callTool({ name: 'focus', arguments: { target: 'gajim' } });
+    const fsc = focus.structuredContent as { ok: boolean; error: { code: string } | undefined; rule?: string };
+    expect(fsc.ok).toBe(false);
+    expect(fsc.error?.code).toBe('PERMISSION_DENIED');
+    expect(fsc.rule).toBe('killSwitch');
+    // observers still answer
+    const gs = await client.callTool({ name: 'get_state', arguments: {} });
+    expect((gs.structuredContent as { ok: boolean }).ok).toBe(true);
+    fs.rmSync(kill, { force: true });
+  });
+
+  it('tools.exclude hides dispatch from tools/list and denies calls', async () => {
+    const c = await makeServer({ tools: { allow: [], exclude: ['dispatch'] } });
+    // tools/list no longer advertises dispatch; a direct call is denied with a structured envelope
+    const res = await c.callTool({ name: 'dispatch', arguments: { args: ['focuswindow', 'address:0x55dfd4972540'] } });
+    const sc = res.structuredContent as { ok: boolean; error: { code: string } | undefined; rule?: string };
+    expect(sc.ok).toBe(false);
+    expect(sc.error?.code).toBe('PERMISSION_DENIED');
+    expect(sc.rule).toBe('tools.exclude');
+  });
+
+  it('readOnly keeps observation tools and denies mutators', async () => {
+    const c = await makeServer({ readOnly: true });
+    const close = await c.callTool({ name: 'close', arguments: { target: 'gajim' } });
+    const csc = close.structuredContent as { ok: boolean; error: { code: string } | undefined; rule?: string };
+    expect(csc.ok).toBe(false);
+    expect(csc.error?.code).toBe('PERMISSION_DENIED');
+    expect(csc.rule).toBe('readOnly');
+    const gs = await c.callTool({ name: 'get_state', arguments: {} });
+    expect((gs.structuredContent as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('audit log records a denial with rule', async () => {
+    const auditPath = path.join(os.tmpdir(), `hypr-audit-${Date.now()}`, 'audit.jsonl');
+    const c = await makeServer({ session: { ...loadConfig().session, auditPath }, capabilities: { ...loadConfig().capabilities, input: false } });
+    await c.callTool({ name: 'input_click', arguments: { target: 'gajim' } }); // denied → denial line
+    const lines = fs.readFileSync(auditPath, 'utf8').trim().split('\n');
+    expect(lines.length).toBe(1);
+    const denial = JSON.parse(lines[0]!) as { tool: string; denied: boolean; rule: string };
+    expect(denial.tool).toBe('input_click');
+    expect(denial.denied).toBe(true);
+    expect(denial.rule).toBe('capabilities.input');
   });
 });

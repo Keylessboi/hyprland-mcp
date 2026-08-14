@@ -16,7 +16,7 @@ export interface ScreenshotResult {
   format: 'toplevel' | 'region' | 'monitor';
   region: LogicalRect;
   mapping: ReturnType<typeof buildCoordMapping>;
-  /** null when capture produced no bytes */
+  /** true when capture produced no bytes */
   empty: boolean;
 }
 
@@ -63,7 +63,6 @@ export class RealCommandRunner implements ScreenshotBackend {
   }
 }
 
-/** Tiny PNG probe: non-empty and starts with the PNG magic. */
 export function isPlausiblePng(data: Buffer): boolean {
   return data.length > 8 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47;
 }
@@ -94,17 +93,17 @@ export class Screenshotter {
       format: 'toplevel',
       region: { x: 0, y: 0, w: 0, h: 0 },
       mapping: buildCoordMapping({ x: 0, y: 0, w: 0, h: 0 }, this.monitors, 1),
-      empty: stdout.length === 0 || !isPlausiblePng(stdout) && stdout.length < 100,
+      empty: stdout.length === 0 || (!isPlausiblePng(stdout) && stdout.length < 100),
     };
   }
 
   /** Geometry crop (grim -g). For visible windows, monitors, regions. */
-  async region(rect: LogicalRect, opts?: { jpeg?: boolean; timeoutMs?: number }): Promise<ScreenshotResult> {
-    const format = opts?.jpeg ?? true;
+  async region(rect: LogicalRect, opts: { jpeg?: boolean; timeoutMs?: number } = {}): Promise<ScreenshotResult> {
+    const format = opts.jpeg ?? true;
     const args = format
       ? ['-t', 'jpeg', '-g', grimGeometry(rect), '-']
       : ['-g', grimGeometry(rect), '-'];
-    const { stdout, code } = await this.runner.run('grim', args, { timeoutMs: opts?.timeoutMs ?? 10_000 });
+    const { stdout, code } = await this.runner.run('grim', args, { timeoutMs: opts.timeoutMs ?? 10_000 });
     if (code !== 0 && code !== null) {
       throw new HyprError('SCREENSHOT_FAILED', `grim -g returned ${code}`, {
         hint: 'Check region is on a live monitor with output enabled (DPMS?)',

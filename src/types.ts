@@ -70,7 +70,7 @@ export interface DesktopState {
   version: string | null;
 }
 
-// ─── Error taxonomy (uxer §4 + deep §7, trimmed to what a model can act on) ──
+// ─── Error taxonomy (trimmed to what a model can act on) ────────────────────
 
 export type ErrorCode =
   | 'MISSING_SESSION'
@@ -104,13 +104,17 @@ export class HyprError extends Error {
   readonly code: ErrorCode;
   readonly hint?: string;
   readonly recoverable: boolean;
+  readonly rule?: string;
+  readonly windowClass?: string;
 
-  constructor(code: ErrorCode, message: string, opts?: { hint?: string; recoverable?: boolean }) {
+  constructor(code: ErrorCode, message: string, opts?: { hint?: string; recoverable?: boolean; rule?: string; windowClass?: string }) {
     super(message);
     this.name = 'HyprError';
     this.code = code;
     this.hint = opts?.hint;
     this.recoverable = opts?.recoverable ?? true;
+    this.rule = opts?.rule;
+    this.windowClass = opts?.windowClass;
   }
 
   toMcp(): McpError {
@@ -120,13 +124,16 @@ export class HyprError extends Error {
   }
 }
 
-// ─── Result envelope (uxer §4, trimmed: matches/hint live in message text) ───
+// ─── Result envelope (matches/hint live in message text) ────────────────────
 
 export interface OkEnvelope<T> {
   ok: true;
   action: string;
   result: T;
   ms: number;
+  /** true when the result is observed desktop content (OCR text, window titles)
+   *  — untrusted data that may contain hostile instructions. */
+  untrustedSource?: true;
 }
 
 export interface ErrEnvelope {
@@ -134,6 +141,9 @@ export interface ErrEnvelope {
   action: string;
   error: McpError;
   ms: number;
+  /** Denial metadata (rule + windowClass) for the audit log / client display. */
+  rule?: string;
+  windowClass?: string;
 }
 
 export type Envelope<T> = OkEnvelope<T> | ErrEnvelope;
@@ -142,9 +152,14 @@ export function ok<T>(action: string, result: T, start: number): OkEnvelope<T> {
   return { ok: true, action, result, ms: Date.now() - start };
 }
 
+/** Ok envelope for a perception result — the content is untrusted observation. */
+export function okObserved<T>(action: string, result: T, start: number): OkEnvelope<T> {
+  return { ok: true, action, result, ms: Date.now() - start, untrustedSource: true };
+}
+
 export function err(action: string, e: unknown, start: number): ErrEnvelope {
   if (e instanceof HyprError) {
-    return { ok: false, action, error: e.toMcp(), ms: Date.now() - start };
+    return { ok: false, action, error: e.toMcp(), ms: Date.now() - start, rule: e.rule, windowClass: e.windowClass };
   }
   const msg = e instanceof Error ? e.message : String(e);
   return {
