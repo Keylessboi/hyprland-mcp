@@ -16,6 +16,7 @@ import { InputController, type InputBackend } from '../src/input.js';
 import { loadConfig } from '../src/security.js';
 import { buildServer, type ServerDeps } from '../src/index.js';
 import { AuditLog } from '../src/audit.js';
+import { LaunchRegistry } from '../src/launches.js';
 import { startFakeHyprland, type FakeHyprland } from './harness.js';
 import { monitorGeometry } from '../src/geometry.js';
 import fs from 'node:fs';
@@ -175,6 +176,7 @@ beforeEach(async () => {
     config: { ...loadConfig(), screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-shot-')) },
     audit: new AuditLog(path.join(os.tmpdir(), `hypr-audit-${Date.now()}`, 'audit.jsonl')),
     serverVersion: 'test',
+    launches: new LaunchRegistry(fs.mkdtempSync(path.join(os.tmpdir(), 'hypr-launch-'))),
   };
   mutableConfig = deps.config;
 
@@ -367,6 +369,24 @@ describe('MCP server over protocol', () => {
     const sc = res.structuredContent as { ok: boolean; result: { window: string } };
     expect(sc.ok).toBe(true);
     expect(sc.result.window).toBe('0x55dfd4972540');
+  });
+
+  it('launch records a crashing app\'s exit code and output for app_status', async () => {
+    const res = await client.callTool({
+      name: 'launch',
+      arguments: { command: '/bin/sh', args: ['-c', 'echo booting; echo fatal: no display >&2; exit 3'], wait_for_window: true, timeout_ms: 3000 },
+    });
+    const sc = res.structuredContent as { ok: boolean; error: { message: string; hint: string } };
+    expect(sc.ok).toBe(false);
+    expect(sc.error.message).toContain('exited with status 3');
+    expect(sc.error.hint).toContain('fatal: no display');
+    const id = /launch_id: "([^"]+)"/.exec(sc.error.hint)![1]!;
+    const st = await client.callTool({ name: 'app_status', arguments: { launch_id: id } });
+    const r = (st.structuredContent as { result: { running: boolean; exit_code: number; output: string } }).result;
+    expect(r).toMatchObject({ running: false, exit_code: 3 });
+    expect(r.output).toBe('booting\nfatal: no display\n');
+    const list = await client.callTool({ name: 'app_status', arguments: {} });
+    expect((list.structuredContent as { result: { launches: { launch_id: string }[] } }).result.launches[0]!.launch_id).toBe(id);
   });
 
   it('launch without workspace keeps the current behavior (no exec dispatch)', async () => {

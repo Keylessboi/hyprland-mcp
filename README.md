@@ -9,6 +9,7 @@ The server gives an agent these tools:
 - **See the desktop.** List every window, including windows on other workspaces. Capture any window, even one that is occluded or hidden. The capture does not disturb the app.
 - **Type and click.** Send text, key chords, mouse clicks, and clipboard paste. The click path uses a native plugin when it is loaded (see below). Screenshots and input are refused while the screen is locked (`SESSION_LOCKED`); read-only queries still answer.
 - **Launch and control.** Start apps, move them to a private agent workspace, focus, close.
+- **See what the app did.** Every launch records the app's pid, stdout/stderr and exit code. `app_status` returns them, so an agent catches crashes and log output a window never shows. `launch` itself fails fast, with the output tail, when the app exits before opening a window.
 
 ## The agent workspace
 
@@ -18,7 +19,12 @@ Launch an app into the agent workspace in one step (the named workspace is creat
 
 ```
 launch { command: "foot", args: ["--title", "agent-shell"], workspace: "name:agent", wait_for_window: true }
+→ { launch_id: "l-…", pid: 12345, window: "0x…" }
+app_status { launch_id: "l-…" }
+→ { running: true, exit_code: null, output: "…stdout+stderr tail…" }
 ```
+
+Launch records live in `$XDG_RUNTIME_DIR/hyprland-mcp/launches/<launch_id>/` (`pid`, `out`, `exit`), private to the user. Set `HYPRLAND_MCP_LAUNCH_DIR` to move them.
 
 The agent sees the window wherever it sits. No focus change. No workspace switch.
 
@@ -48,36 +54,37 @@ cd hyprland-mcp
 npm install
 ```
 
-## Run as a systemd service
-
-A user unit is installed at `~/.config/systemd/user/hyprland-mcp.service`. It runs the compiled binary.
+## Build and install
 
 ```sh
-systemctl --user daemon-reload
-systemctl --user enable --now hyprland-mcp.service
-journalctl --user -u hyprland-mcp.service -f
+bun install
+bun run build                                  # dist/hyprland-mcp (single binary)
+install -m 0755 dist/hyprland-mcp ~/.local/bin/hyprland-mcp
 ```
 
-Rebuild the binary after code changes:
+It is a stdio server: the agent starts it. There is no daemon to run.
+
+## Wire into agents
+
+Claude Code (user scope):
 
 ```sh
-bun build src/index.ts --compile --outfile dist/hyprland-mcp
-systemctl --user restart hyprland-mcp.service
+claude mcp add -s user hyprland -- ~/.local/bin/hyprland-mcp
 ```
 
-## Wire into opencode
-
-The opencode config points at the compiled binary:
+opencode (`~/.config/opencode/opencode.json`):
 
 ```jsonc
 "mcp": {
   "hyprland": {
     "type": "local",
-    "command": ["/home/travis/Projects/hyprland-mcp/dist/hyprland-mcp"],
+    "command": ["/home/<you>/.local/bin/hyprland-mcp"],
     "timeout": 10000
   }
 }
 ```
+
+For VMs instead of this desktop, use [vmhub](https://github.com/Keylessboi/vmhub): its Hyprland golden runs this server inside the VM.
 
 ## Run tests
 
