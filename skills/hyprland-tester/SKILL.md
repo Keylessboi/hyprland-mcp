@@ -95,6 +95,8 @@ input_key { chord: "enter", target: "foot", mods: [] }
 
 Screenshot again, delegate to vision, compare. The vision subagent should say whether the expected change happened.
 
+Then read the app's own output: `app_status { launch_id }` (the id `launch` returned). Report warnings, stack traces and a nonzero `exit_code` even when the screen looks fine — they are test findings.
+
 ## Loop Control
 
 Stop after:
@@ -109,8 +111,8 @@ Report the result: what was tested, what actions were taken, what the final scre
 | Symptom | Action |
 |---|---|
 | MCP server unreachable | Start the service, wait 3s, retry once |
-| `WINDOW_NOT_FOUND` | The app may have closed. Restart or report. |
-| `APP_LAUNCH_TIMEOUT` | The app did not open in time. Report the pid. |
+| `WINDOW_NOT_FOUND` | The app may have closed. `app_status` shows whether it exited and why. |
+| `APP_LAUNCH_TIMEOUT` | The app did not open a window. If the message says it exited, the hint holds its output tail — report it. Otherwise check `app_status` for output. |
 | `YDOTOOL_UNAVAILABLE` | ydotoold is down. Notify the user to start it. |
 | Vision subagent returns uncertain | Capture a higher-resolution screenshot and retry once. |
 | Three consecutive actions with no visual change | Stop the loop. The app may be unresponsive. |

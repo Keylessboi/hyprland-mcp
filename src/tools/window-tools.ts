@@ -14,6 +14,13 @@ import { assertExecAllowed } from '../security.js';
 import { assertNotLocked } from '../lock.js';
 import { resolveUnique, assertWindowAllowed, targetSchema, wsIdSchema } from './window-addressing.js';
 import { gatedRegister, type ToolPolicy } from './guard.js';
+import { LaunchRegistry, inProcessTree } from '../launches.js';
+
+let sharedLaunches: LaunchRegistry | undefined;
+function defaultLaunches(): LaunchRegistry {
+  sharedLaunches ??= new LaunchRegistry();
+  return sharedLaunches;
+}
 
 type GatedRegister = typeof gatedRegister;
 
@@ -33,6 +40,7 @@ function quoteJoin(argv: string[]): string {
 
 export function registerWindowTools(server: McpServer, deps: ServerDeps, gatedRegister: GatedRegister): void {
   const { ipc, state, config } = deps;
+  const launches = deps.launches ?? defaultLaunches();
 
   gatedRegister(
     server,
@@ -55,74 +63,101 @@ export function registerWindowTools(server: McpServer, deps: ServerDeps, gatedRe
       const start = Date.now();
       try {
         assertExecAllowed(config, command);
-        if (workspace !== undefined) {
+        const wsSpec = workspace !== undefined ? String(workspace) : undefined;
+        // Every launch runs under the recording wrapper (see launches.ts):
+        // the app's pid, output and exit status stay readable via app_status.
+        const { record, argv } = launches.prepare(command, args, wsSpec);
+        if (wsSpec !== undefined) {
           // Atomic placement: Hyprland opens the window on the target
-          // workspace directly via the exec rule. No server-side pid is
-          // available (the compositor forks), so wait_for_window matches by
-          // class, and cleanup goes through close/kill on the window.
-          const wsSpec = String(workspace);
+          // workspace directly via the exec rule; the rule follows the
+          // window's parent chain, so the wrapper does not break it.
           // silent: open on the target workspace WITHOUT stealing focus or
-          // switching the user's active workspace (verified: active ws stays
-          // put; the app lands on the named workspace unfocused)
-          await ipc.dispatch(['exec', `[workspace ${wsSpec} silent] ${quoteJoin([command, ...args])}`]);
-          if (!wait_for_window) {
-            return { content: [{ type: 'text', text: JSON.stringify({ workspace: wsSpec }) }], structuredContent: ok('launch', { workspace: wsSpec, waited: false }, start) } as const;
-          }
-          // Resolve the target workspace's id for the poll. A name: selector
-          // gets a -1337-class id that the snapshot reports by that id.
-          const resolveWsId = (s: { workspaces: { id: number; name: string }[] }): number | undefined => {
-            if (typeof workspace === 'number')
-              return workspace;
-            const clean = workspace.startsWith('name:') ? workspace.slice(5) : workspace;
-            return s.workspaces.find((w) => w.name === clean)?.id;
-          };
-          const deadline = Date.now() + timeout_ms;
-          const classMatch = command.toLowerCase().split('/').pop()!.toLowerCase();
-          while (Date.now() < deadline) {
-            const s = await state.snapshot();
-            const wsId = resolveWsId(s);
-            const match = s.clients.find((c) => c.class.toLowerCase().includes(classMatch) && (wsId === undefined || c.workspace.id === wsId));
-            if (match) {
-              return { content: [{ type: 'text', text: JSON.stringify({ workspace: wsSpec, window: { address: match.address, class: match.class } }) }], structuredContent: ok('launch', { workspace: wsSpec, window: match.address, waited: true }, start) } as const;
-            }
-            await new Promise((r) => setTimeout(r, 200));
-          }
-          throw new HyprError('APP_LAUNCH_TIMEOUT', `launched into workspace ${wsSpec} but no window appeared in ${timeout_ms}ms`, {
-            hint: `The process may still be starting, or crashed. Check with list_windows / get_state.`,
-            recoverable: false,
+          // switching the user's active workspace.
+          await ipc.dispatch(['exec', `[workspace ${wsSpec} silent] ${quoteJoin(argv)}`]);
+        } else {
+          spawnDetached(argv[0]!, argv.slice(1), {
+            WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? '',
+            XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? '',
+            HYPRLAND_INSTANCE_SIGNATURE: process.env.HYPRLAND_INSTANCE_SIGNATURE ?? '',
           });
         }
-        const sig = process.env.HYPRLAND_INSTANCE_SIGNATURE ?? '';
-        const env = {
-          WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? '',
-          XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? '',
-          HYPRLAND_INSTANCE_SIGNATURE: sig,
-        };
-        const { pid } = spawnDetached(command, args, env);
+        const pid = await launches.waitForPid(record, wait_for_window ? 3000 : 1000);
+        const base = { launch_id: record.id, pid, ...(wsSpec !== undefined ? { workspace: wsSpec } : {}) };
         if (!wait_for_window) {
-          return { content: [{ type: 'text', text: JSON.stringify({ pid }) }], structuredContent: ok('launch', { pid, waited: false }, start) } as const;
+          return { content: [{ type: 'text', text: JSON.stringify(base) }], structuredContent: ok('launch', { ...base, waited: false }, start) } as const;
         }
-        // poll clients for a new window whose pid group matches
+        // A named workspace resolves to a -1337-class id in the snapshot.
+        const resolveWsId = (s: { workspaces: { id: number; name: string }[] }): number | undefined => {
+          if (workspace === undefined) return undefined;
+          if (typeof workspace === 'number') return workspace;
+          const clean = workspace.startsWith('name:') ? workspace.slice(5) : workspace;
+          return s.workspaces.find((w) => w.name === clean)?.id;
+        };
         const deadline = Date.now() + timeout_ms;
-        let found: { address: string; class: string } | null = null;
+        const classMatch = command.toLowerCase().split('/').pop()!;
         while (Date.now() < deadline) {
           const s = await state.snapshot();
-          const match = s.clients.find((c) => c.pid === pid || c.class.toLowerCase().includes(command.toLowerCase().split('/').pop()!.toLowerCase()));
+          const wsId = resolveWsId(s);
+          // Prefer the launched process tree; fall back to class (single-instance
+          // apps hand the window to an existing process) — on the target
+          // workspace when one was given.
+          const match =
+            (pid ? s.clients.find((c) => inProcessTree(c.pid, pid)) : undefined) ??
+            s.clients.find((c) => c.class.toLowerCase().includes(classMatch) && (wsSpec === undefined ? true : wsId === undefined || c.workspace.id === wsId));
           if (match) {
-            found = { address: match.address, class: match.class };
-            break;
+            const window = { address: match.address, class: match.class };
+            return { content: [{ type: 'text', text: JSON.stringify({ ...base, window }) }], structuredContent: ok('launch', { ...base, window: wsSpec !== undefined ? match.address : window, waited: true }, start) } as const;
+          }
+          const st = launches.status(record, 4000);
+          if (st.exit_code !== null) {
+            throw new HyprError('APP_LAUNCH_TIMEOUT', `${command} exited with status ${st.exit_code} before opening a window`, {
+              hint: `Output tail:\n${st.output || '(no output)'}\nFull record: app_status { launch_id: "${record.id}" }`,
+              recoverable: false,
+            });
           }
           await new Promise((r) => setTimeout(r, 200));
         }
-        if (!found) {
-          throw new HyprError('APP_LAUNCH_TIMEOUT', `launched pid ${pid} but no window appeared in ${timeout_ms}ms`, {
-            hint: `The process may still be starting, or crashed. Check with list_windows / get_state. pid=${pid}`,
-            recoverable: false,
-          });
-        }
-        return { content: [{ type: 'text', text: JSON.stringify({ pid, window: found }) }], structuredContent: ok('launch', { pid, window: found, waited: true }, start) } as const;
+        throw new HyprError('APP_LAUNCH_TIMEOUT', `launched ${command} (pid ${pid ?? 'unknown'}) but no window appeared in ${timeout_ms}ms`, {
+          hint: `It may still be starting, or be a CLI program. Check app_status { launch_id: "${record.id}" } for its output and exit code.`,
+          recoverable: false,
+        });
       } catch (e) {
         return { content: [{ type: 'text', text: JSON.stringify(err('launch', e, start)) }], isError: true, structuredContent: err('launch', e, start) } as const;
+      }
+    },
+  );
+
+  gatedRegister(
+    server,
+    deps,
+    'app_status',
+    {
+      title: 'Launched app status and output',
+      description:
+        'What happened to an app started with launch: running or exited, exit code (signal when killed), and the tail of its stdout+stderr. Call without launch_id to list recent launches. Use it after launch to catch crashes, warnings and log lines a window never shows.',
+      inputSchema: z.object({
+        launch_id: z.string().optional().describe('launch_id returned by launch'),
+        tail_bytes: z.number().int().positive().max(1_000_000).default(16000).describe('How much of the end of the output to return'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    { mutating: false, observation: true },
+    async ({ launch_id, tail_bytes }) => {
+      const start = Date.now();
+      try {
+        if (!launch_id) {
+          const recent = launches.list().slice(0, 50).map((r) => {
+            const st = launches.status(r, 0);
+            return { launch_id: r.id, command: r.command, running: st.running, exit_code: st.exit_code, output_bytes: st.output_bytes, runtime_ms: st.runtime_ms };
+          });
+          return { content: [{ type: 'text', text: JSON.stringify({ launches: recent }, null, 2) }], structuredContent: ok('app_status', { launches: recent }, start) } as const;
+        }
+        const rec = launches.get(launch_id);
+        if (!rec) throw new HyprError('WINDOW_NOT_FOUND', `no launch "${launch_id}"`, { hint: 'Call app_status without launch_id to list launches.', recoverable: false });
+        const st = launches.status(rec, tail_bytes);
+        return { content: [{ type: 'text', text: JSON.stringify(st, null, 2) }], structuredContent: ok('app_status', st, start) } as const;
+      } catch (e) {
+        return { content: [{ type: 'text', text: JSON.stringify(err('app_status', e, start)) }], isError: true, structuredContent: err('app_status', e, start) } as const;
       }
     },
   );
