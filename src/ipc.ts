@@ -148,6 +148,12 @@ export function parseExecRules(arg: string): { rules: Record<string, string>; co
   return { rules, command: m[2] ?? '' };
 }
 
+/** `exact 640 480`, `640 480` or `640x480` → [640, 480]. */
+export function pixelPair(spec: string | undefined): [number, number] {
+  const [a, b] = (spec ?? '').replace(/^\s*exact\s+/, '').split(/[\sx]+/);
+  return [Number(a), Number(b)];
+}
+
 /**
  * The classic verbs this server actually dispatches, as `hl.dsp.*` calls.
  * Argument names come from Hyprland 0.56's LuaBindingsDispatchers.cpp — note
@@ -196,19 +202,19 @@ const LUA_DISPATCH: Record<string, (rest: string[]) => string> = {
   },
   togglefloating: (rest) => `hl.dsp.window.float(${luaTable({ action: 'toggle', window: fields(rest)[0] })})`,
 
-  // `<w>x<h>,<selector>` — an exact size, hence relative = false.
+  // `exact <w> <h>,<selector>`. Older callers wrote `<w>x<h>` or a bare
+  // `<w> <h>` delta, so all three are read here; the Lua call is always the
+  // absolute one, which is what the window tool documents.
   resizewindowpixel: (rest) => {
-    const [size, window] = fields(rest);
-    const [w, h] = (size ?? '').split('x');
-    return `hl.dsp.window.resize(${luaTable({ x: Number(w), y: Number(h), relative: false, window })})`;
+    const [spec, window] = fields(rest);
+    const [w, h] = pixelPair(spec);
+    return `hl.dsp.window.resize(${luaTable({ x: w, y: h, relative: false, window })})`;
   },
-  // `<x>,<y>,<selector>`, optionally prefixed "exact". The window tool means an
-  // absolute position (the classic verb read bare numbers as a delta).
+  // `exact <x> <y>,<selector>` — same shapes, same absolute meaning.
   movewindowpixel: (rest) => {
-    const parts = fields(rest);
-    const first = (parts[0] ?? '').replace(/^exact\s+/, '');
-    const [x, y, window] = [first, parts[1], parts[2]];
-    return `hl.dsp.window.move(${luaTable({ x: Number(x), y: Number(y), relative: false, window })})`;
+    const [spec, window] = fields(rest);
+    const [x, y] = pixelPair(spec);
+    return `hl.dsp.window.move(${luaTable({ x, y, relative: false, window })})`;
   },
 };
 

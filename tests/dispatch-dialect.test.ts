@@ -4,7 +4,7 @@
  * and workspace-isolated launches working across both versions.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { dispatchRequest, isDialectError, resetDispatchDialect, parseExecRules } from '../src/ipc.js';
+import { dispatchRequest, isDialectError, resetDispatchDialect, parseExecRules, pixelPair } from '../src/ipc.js';
 
 beforeEach(() => resetDispatchDialect());
 
@@ -44,6 +44,18 @@ describe('dispatchRequest', () => {
     expect(dispatchRequest(['exec', 'foot'], 'lua')).toBe('dispatch hl.dsp.exec_cmd("foot")');
   });
 
+  // Verified against Hyprland 0.56.2: `resizewindowpixel 640x480,…` answers
+  // "ok" and resizes nothing, and `movewindowpixel 120,140,…` fails with
+  // "moveWindow: no window". Only the `exact <a> <b>` form works.
+  it('uses the exact-pixel form for geometry, in both dialects', () => {
+    expect(dispatchRequest(['resizewindowpixel', 'exact 640 480,address:0x1'], 'string'))
+      .toBe('dispatch resizewindowpixel exact 640 480,address:0x1');
+    expect(dispatchRequest(['resizewindowpixel', 'exact 640 480,address:0x1'], 'lua'))
+      .toBe('dispatch hl.dsp.window.resize({ x = 640, y = 480, relative = false, window = "address:0x1" })');
+    expect(dispatchRequest(['movewindowpixel', 'exact 120 140,address:0x1'], 'lua'))
+      .toBe('dispatch hl.dsp.window.move({ x = 120, y = 140, relative = false, window = "address:0x1" })');
+  });
+
   it('refuses a verb it cannot translate instead of silently succeeding', () => {
     // sendclick is a plugin dispatcher; 0.56 has no hl.dsp entry for it.
     expect(() => dispatchRequest(['sendclick', 'address:0x1,button:left'], 'lua')).toThrow(/DISPATCH_UNSUPPORTED|no Lua translation/);
@@ -52,6 +64,14 @@ describe('dispatchRequest', () => {
   it('escapes quotes and backslashes so a title cannot break out of the Lua string', () => {
     const req = dispatchRequest(['exec', 'foot --title "a\\b"'], 'lua');
     expect(req).toBe('dispatch hl.dsp.exec_cmd("foot --title \\"a\\\\b\\"")');
+  });
+});
+
+describe('pixelPair', () => {
+  it('reads every geometry spelling a caller might pass', () => {
+    expect(pixelPair('exact 640 480')).toEqual([640, 480]);
+    expect(pixelPair('640 480')).toEqual([640, 480]);
+    expect(pixelPair('640x480')).toEqual([640, 480]);
   });
 });
 

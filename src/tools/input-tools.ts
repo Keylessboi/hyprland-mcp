@@ -66,7 +66,7 @@ export function registerInputTools(server: McpServer, deps: ServerDeps, gatedReg
           const origWs = w.workspace.id;
 
           if (needsOverlay) {
-            await ipc.dispatch(['movetoworkspacesilent', 'special:mcp-click', `address:${address}`]);
+            await ipc.dispatch(['movetoworkspacesilent', `special:mcp-click,address:${address}`]);
             await ipc.dispatch(['togglespecialworkspace', 'mcp-click']);
           }
           await ipc.dispatch(['focuswindow', `address:${address}`]);
@@ -76,7 +76,7 @@ export function registerInputTools(server: McpServer, deps: ServerDeps, gatedReg
 
           if (needsOverlay) {
             await ipc.dispatch(['togglespecialworkspace', 'mcp-click']);
-            await ipc.dispatch(['movetoworkspacesilent', String(origWs), `address:${address}`]);
+            await ipc.dispatch(['movetoworkspacesilent', `${origWs},address:${address}`]);
           }
           return { content: [{ type: 'text', text: JSON.stringify({ x: cx, y: cy, button, address, overlay: needsOverlay }) }], structuredContent: ok('input_click', { x: cx, y: cy, button, overlay: needsOverlay }, start) } as const;
         }

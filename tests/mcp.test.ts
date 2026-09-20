@@ -464,11 +464,14 @@ describe('MCP server over protocol', () => {
     expect(sc.error.code).toBe('WAIT_TIMEOUT');
   });
 
+  // The exact-pixel form is load-bearing: Hyprland answers "ok" to
+  // `resizewindowpixel 800x600,…` and resizes nothing, so this assertion is
+  // the only thing standing between a silent no-op and a working resize.
   it('window tool dispatches resize and move with address selectors', async () => {
     await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'resize', w: 800, h: 600 } });
-    expect(fake.received().some((r) => r.startsWith('dispatch resizewindowpixel 800x600,address:0x55dfd4972540'))).toBe(true);
+    expect(fake.received().some((r) => r.startsWith('dispatch resizewindowpixel exact 800 600,address:0x55dfd4972540'))).toBe(true);
     await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'move', x: 100, y: 200 } });
-    expect(fake.received().some((r) => r.startsWith('dispatch movewindowpixel 100,200,address:0x55dfd4972540'))).toBe(true);
+    expect(fake.received().some((r) => r.startsWith('dispatch movewindowpixel exact 100 200,address:0x55dfd4972540'))).toBe(true);
     await client.callTool({ name: 'window', arguments: { target: 'gajim', action: 'fullscreen' } });
     expect(fake.received().some((r) => r.startsWith('dispatch fullscreen 1 address:0x55dfd4972540'))).toBe(true);
   });

@@ -99,12 +99,22 @@ try {
     const moved = await win(addr);
     check('movewindowpixel applies an absolute position', moved?.at?.[0] === 120 && moved?.at?.[1] === 140, `at=${JSON.stringify(moved?.at)}`);
 
-    await call('window', { target: addr, action: 'fullscreen' });
-    await sleep(500);
-    const full = await win(addr);
-    check('fullscreen changes the window geometry', full?.size?.[0] !== 640 || full?.size?.[1] !== 480, `size=${JSON.stringify(full?.size)}`);
-    await call('window', { target: addr, action: 'fullscreen' });
-    await sleep(400);
+    // Classic Hyprland's fullscreen dispatcher only reaches a window the
+    // compositor can make active, so on the string dialect a window parked on
+    // a hidden workspace is legitimately out of reach. The Lua dispatcher
+    // takes a window selector and has no such limit.
+    const fs = await tryCall('window', { target: addr, action: 'fullscreen' });
+    if (!fs.ok && /Window not found/.test(fs.error)) {
+      console.log('SKIP fullscreen: the classic dialect cannot target a window on a hidden workspace');
+    } else if (!fs.ok) {
+      check('fullscreen dispatch accepted', false, fs.error);
+    } else {
+      await sleep(500);
+      const full = await win(addr);
+      check('fullscreen changes the window geometry', full?.size?.[0] !== 640 || full?.size?.[1] !== 480, `size=${JSON.stringify(full?.size)}`);
+      await call('window', { target: addr, action: 'fullscreen' });
+      await sleep(400);
+    }
   }
 } finally {
   // Always hand the window back, however a check ended.

@@ -278,7 +278,10 @@ export function registerWindowTools(server: McpServer, deps: ServerDeps, gatedRe
       try {
         if (target !== undefined) {
           const { address } = await resolveUnique(deps, target, 'workspace');
-          await ipc.dispatch(['movetoworkspacesilent', String(id), `address:${address}`]);
+          // One comma-joined argument: classic Hyprland parses
+          // `<workspace>,<selector>`, and a space-separated pair is read as
+          // a workspace name that does not exist.
+          await ipc.dispatch(['movetoworkspacesilent', `${id},address:${address}`]);
           return { content: [{ type: 'text', text: JSON.stringify({ moved: address, to: id }) }], structuredContent: ok('workspace', { moved: address, to: id }, start) } as const;
         }
         await ipc.dispatch(['workspace', String(id)]);
@@ -319,12 +322,16 @@ export function registerWindowTools(server: McpServer, deps: ServerDeps, gatedRe
             break;
           case 'resize': {
             if (w === undefined || h === undefined) throw new HyprError('INVALID_ARGUMENTS', 'resize needs w and h');
-            await ipc.dispatch(['resizewindowpixel', `${w}x${h},${sel}`]);
+            // `exact <w> <h>` — Hyprland answers ok to `<w>x<h>` and resizes
+            // nothing, so the wrong form here is invisible.
+            await ipc.dispatch(['resizewindowpixel', `exact ${w} ${h},${sel}`]);
             break;
           }
           case 'move': {
             if (x === undefined || y === undefined) throw new HyprError('INVALID_ARGUMENTS', 'move needs x and y');
-            await ipc.dispatch(['movewindowpixel', `${Math.round(x)},${Math.round(y)},${sel}`]);
+            // `exact <x> <y>` — bare numbers are a delta, and comma-separated
+            // ones fail outright with "moveWindow: no window".
+            await ipc.dispatch(['movewindowpixel', `exact ${Math.round(x)} ${Math.round(y)},${sel}`]);
             break;
           }
           case 'float':

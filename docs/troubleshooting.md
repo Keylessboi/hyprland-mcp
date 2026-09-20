@@ -120,6 +120,11 @@ dies with a Lua syntax error and a bare verb is rejected with
 focus an address that cannot exist) and translates each verb into the real
 `hl.dsp.*` call.
 
+**The dialect follows the config format, not the version.** A Debian 0.56.2
+with a hyprlang `hyprland.conf` still answers the classic strings; an Arch
+0.56.2 with a Lua `hyprland.lua` rejects them. Two machines on the same version
+disagree, which is why the dialect is probed and never inferred.
+
 **`hl.dsp.global` is not an escape hatch.** It is the dispatcher for *global
 shortcuts*. Passing it a classic verb returns `ok` and does nothing — the worst
 possible failure here, because a launch then lands on the user's screen with no
@@ -160,3 +165,40 @@ node scripts/live-dispatch-check.mjs ./dist/hyprland-mcp
 
 The geometry checks in the second script go through the lock guard, so they are
 skipped (not failed) while the screen is locked.
+
+
+## Classic dispatcher syntax that fails quietly
+
+Verified against a real Hyprland 0.56.2 speaking the classic dialect. These
+forms are all *wrong*, and two of the three are answered with `ok`:
+
+| wrong | what happens | right |
+| --- | --- | --- |
+| `resizewindowpixel 640x480,<sel>` | **`ok`, resizes nothing** | `resizewindowpixel exact 640 480,<sel>` |
+| `movewindowpixel 120,140,<sel>` | `moveWindow: no window` | `movewindowpixel exact 120 140,<sel>` |
+| `movetoworkspacesilent <ws> <sel>` | `Invalid workspace` | `movetoworkspacesilent <ws>,<sel>` — one comma-joined argument |
+| `movetoworkspacesilent agent,<sel>` | `Invalid workspace` | `movetoworkspacesilent name:agent,<sel>` |
+
+Bare numbers in `movewindowpixel`/`resizewindowpixel` are a *delta*; `exact`
+makes them absolute, which is what the `window` tool documents.
+
+`fullscreen <mode> <sel>` cannot reach a window the compositor can't make
+active, so a window parked on a hidden workspace returns `Window not found`.
+The Lua dispatcher takes a real window selector and has no such limit.
+
+## Checking against both dialects
+
+The desktop you develop on probably speaks only one of the two. A vmhub
+Hyprland VM covers the other:
+
+```sh
+# Debian's hyprland is 0.55; sid has 0.56.2, and its hyprlang config means it
+# still speaks the classic strings.
+echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list.d/sid.list
+printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid-pin
+apt-get update && apt-get install -y -t unstable hyprland
+```
+
+Run the check as the session user **with its home as cwd** — `su` keeps the
+caller's cwd, and a terminal whose cwd is an unreadable `/root` dies instantly
+with `slave exited with signal 1`, which looks exactly like a compositor bug.
