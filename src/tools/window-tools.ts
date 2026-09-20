@@ -24,6 +24,20 @@ function defaultLaunches(): LaunchRegistry {
 
 type GatedRegister = typeof gatedRegister;
 
+/**
+ * Is this client already on the workspace the caller asked for? Compares the
+ * same selector forms `launch` accepts: "name:agent", "special:magic", or a
+ * bare numeric id.
+ */
+export function onWorkspace(client: { workspace: { id: number; name: string } }, spec: string): boolean {
+  const s = spec.trim();
+  if (s.startsWith('name:')) return client.workspace.name === s.slice(5);
+  if (s.startsWith('special:')) return client.workspace.name === s;
+  if (/^-?\d+$/.test(s)) return client.workspace.id === Number(s);
+  return client.workspace.name === s;
+}
+
+
 /** Quote-join argv into a single shell string for `dispatch exec`. Hyprland
  * runs exec through /bin/sh -c, so each arg must survive the shell. This is
  * the plan's rule: validate + quote server-side, never build from window
@@ -105,6 +119,12 @@ export function registerWindowTools(server: McpServer, deps: ServerDeps, gatedRe
             (pid ? s.clients.find((c) => inProcessTree(c.pid, pid)) : undefined) ??
             s.clients.find((c) => c.class.toLowerCase().includes(classMatch) && (wsSpec === undefined ? true : wsId === undefined || c.workspace.id === wsId));
           if (match) {
+            // Trust nothing about placement: a window on the user's screen is
+            // the one outcome worth a second round trip to rule out, so check
+            // where it actually landed and move it if the exec rule missed.
+            if (wsSpec !== undefined && !onWorkspace(match, wsSpec)) {
+              await ipc.dispatch(['movetoworkspacesilent', `${wsSpec},address:${match.address}`]);
+            }
             const window = { address: match.address, class: match.class };
             return { content: [{ type: 'text', text: JSON.stringify({ ...base, window }) }], structuredContent: ok('launch', { ...base, window: wsSpec !== undefined ? match.address : window, waited: true }, start) } as const;
           }

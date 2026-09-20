@@ -108,3 +108,55 @@ systemctl --user restart hyprland-mcp.service
 **Fix.** Unlock the screen, then retry. Read-only queries (`get_state`, `list_windows`) still work while locked.
 
 **Why it fails closed.** If the server cannot confirm the session is unlocked (the `locked` query itself errors), it also refuses. Safer to refuse than to risk typing into a password field.
+
+## Hyprland 0.56: `dispatch` is Lua now
+
+0.56 removed the string dispatcher. The compositor evaluates a dispatch request
+as `return hl.dispatch(<text>)`, so `dispatch movetoworkspacesilent name:agent,address:0x…`
+dies with a Lua syntax error and a bare verb is rejected with
+*"expected a dispatcher (e.g. hl.dsp.window.close())"*.
+
+`src/ipc.ts` probes which dialect the compositor speaks once (by asking it to
+focus an address that cannot exist) and translates each verb into the real
+`hl.dsp.*` call.
+
+**`hl.dsp.global` is not an escape hatch.** It is the dispatcher for *global
+shortcuts*. Passing it a classic verb returns `ok` and does nothing — the worst
+possible failure here, because a launch then lands on the user's screen with no
+error to notice. Anything without a translation is refused with
+`DISPATCH_UNSUPPORTED` instead.
+
+The argument names that matter (from Hyprland's `LuaBindingsDispatchers.cpp`):
+
+| classic | 0.56 Lua |
+| --- | --- |
+| `movetoworkspacesilent <ws>,<sel>` | `hl.dsp.window.move({ workspace = …, follow = false, window = … })` |
+| `movetoworkspace <ws>,<sel>` | `hl.dsp.window.move({ workspace = …, window = … })` |
+| `focuswindow <sel>` | `hl.dsp.focus({ window = … })` |
+| `workspace <ws>` | `hl.dsp.focus({ workspace = … })` |
+| `closewindow <sel>` | `hl.dsp.window.close({ window = … })` |
+| `exec [workspace name:agent silent] cmd` | `hl.dsp.exec_cmd("cmd", { workspace = "name:agent silent" })` |
+| `togglespecialworkspace <name>` | `hl.dsp.workspace.toggle_special("<name>")` |
+| `movecursor <x> <y>` | `hl.dsp.cursor.move({ x = …, y = … })` |
+| `sendshortcut "MODS, KEY, <sel>"` | `hl.dsp.send_shortcut({ mods = …, key = …, window = … })` |
+
+There is **no `silent` key** — "silent" is spelled `follow = false`. There is no
+`sendclick` dispatcher at all in 0.56 (it belongs to the optional click
+plugin), so `input_click`'s overlay path is used instead.
+
+Hyprland ships Lua type stubs at `/usr/share/hypr/stubs/hl.meta.lua`; they list
+every `hl.dsp.*` name, though not the argument keys.
+
+### Checking it against a real compositor
+
+Unit tests cover the translation; two scripts check the compositor actually
+obeys it. Both only ever touch a window they launched themselves, on their own
+named workspace, and fail if the user's active workspace or windows moved.
+
+```sh
+node scripts/live-workspace-check.mjs ./dist/hyprland-mcp name:agent
+node scripts/live-dispatch-check.mjs ./dist/hyprland-mcp
+```
+
+The geometry checks in the second script go through the lock guard, so they are
+skipped (not failed) while the screen is locked.

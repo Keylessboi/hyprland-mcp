@@ -9,7 +9,9 @@ import { classMatches } from '../security.js';
 
 export const targetSchema = z.union([z.string(), z.number()]).describe('Window: address (0x…), class, title, or pid');
 
-export const wsIdSchema = z.number().int().describe('Workspace id (negative = special workspace)');
+export const wsIdSchema = z
+  .union([z.number().int(), z.string()])
+  .describe('Workspace: an id (negative = special), or a selector string — name:agent for a named workspace, special:name for a scratchpad. Same forms launch accepts.');
 
 /** denyClasses + windowScope check. Runs after a unique resolve — never shadows
  *  WINDOW_AMBIGUOUS / WINDOW_NOT_FOUND. */

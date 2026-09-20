@@ -36,9 +36,9 @@ export function registerStateTools(server: McpServer, deps: ServerDeps, gatedReg
             version: s.version,
             activeWindow: s.activeWindow ? { address: s.activeWindow.address, class: s.activeWindow.class, title: s.activeWindow.title, workspace: s.activeWindow.workspace.id } : null,
             cursorpos: s.cursorpos,
-            monitors: s.monitors.map((m) => ({ name: m.name, x: m.x, y: m.y, w: m.width, h: m.height, scale: m.scale, focused: m.focused, dpmsStatus: m.dpmsStatus })),
+            monitors: s.monitors.map((m) => ({ name: m.name, x: m.x, y: m.y, w: m.width, h: m.height, scale: m.scale, focused: m.focused, dpmsStatus: m.dpmsStatus, activeWorkspace: m.activeWorkspace })),
             workspaces: s.workspaces.map((w) => ({ id: w.id, name: w.name, windows: w.windows })),
-            windows: s.clients.map((c) => ({ address: c.address, class: c.class, title: c.title, pid: c.pid, workspace: c.workspace.id, xwayland: c.xwayland, hidden: c.hidden, minimized: c.minimized, at: c.at, size: c.size, focused: s.activeWindow?.address === c.address })),
+            windows: s.clients.map((c) => ({ address: c.address, class: c.class, title: c.title, pid: c.pid, workspace: c.workspace.id, workspaceName: c.workspace.name, xwayland: c.xwayland, hidden: c.hidden, minimized: c.minimized, at: c.at, size: c.size, focused: s.activeWindow?.address === c.address })),
           }, null, 2) },
         ], structuredContent: okObserved('get_state', { windowCount: s.clients.length }, start),
         } as const;
